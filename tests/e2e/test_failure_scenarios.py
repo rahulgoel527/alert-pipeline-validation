@@ -1,4 +1,5 @@
 """Flow 3: Failure injection and recovery tests."""
+import pathlib
 import subprocess
 import time
 import pytest
@@ -10,15 +11,16 @@ from helpers.wait_utils import (
     poll_until,
 )
 
-pytestmark = pytest.mark.failures
+pytestmark = pytest.mark.e2e
 
-COMPOSE_PROJECT = "alert-pipeline-lab"
+# Resolve compose file relative to this test file — works regardless of
+# which directory pytest is invoked from.
+_COMPOSE_FILE = pathlib.Path(__file__).parent.parent.parent / "services" / "docker-compose.yml"
 
 
 def _docker(args, check=True):
-    cmd = ["docker", "compose"] + args
-    return subprocess.run(cmd, capture_output=True, text=True, check=check,
-                          cwd="/Users/rg-psl/projects/tuskira-ai/alert-pipeline-lab")
+    cmd = ["docker", "compose", "-f", str(_COMPOSE_FILE)] + args
+    return subprocess.run(cmd, capture_output=True, text=True, check=check)
 
 
 def _ensure_failures_exist(ledger_client, min_count=1, api_client=None, timeout=120):
@@ -95,6 +97,7 @@ def test_system_continues_after_failure(api_client, ledger_client):
     )
 
 
+@pytest.mark.e2e
 @pytest.mark.slow
 def test_elasticsearch_unavailable_handling(api_client, ledger_client):
     """Stop ES → generate alert → verify event_processor logs FAILED → restart ES → verify recovery."""
@@ -133,6 +136,7 @@ def test_elasticsearch_unavailable_handling(api_client, ledger_client):
         assert terminal in ("STORED", "FAILED", "DUPLICATE_DROPPED")
 
 
+@pytest.mark.e2e
 @pytest.mark.slow
 def test_redis_connection_recovery(api_client, ledger_client):
     """Pause Redis briefly → unpause → verify event_processor resumes without manual intervention."""
@@ -161,6 +165,7 @@ def test_redis_connection_recovery(api_client, ledger_client):
         )
 
 
+@pytest.mark.e2e
 @pytest.mark.slow
 def test_pipeline_stability_under_burst(api_client, ledger_client):
     """Generate 50 alerts rapidly → verify all reach terminal state within 120s.

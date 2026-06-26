@@ -33,7 +33,7 @@ from helpers.wait_utils import (
     poll_until,
 )
 
-pytestmark = pytest.mark.duplicates
+pytestmark = pytest.mark.e2e
 
 
 def _get_existing_duplicate_pair(ledger_client):

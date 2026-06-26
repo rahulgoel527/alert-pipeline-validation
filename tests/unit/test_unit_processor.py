@@ -10,6 +10,8 @@ import sys
 import pytest
 from unittest.mock import MagicMock, patch, call
 
+pytestmark = pytest.mark.unit
+
 # Patch env vars before the module is imported
 _ENV_PATCH = {
     "REDIS_HOST": "localhost",

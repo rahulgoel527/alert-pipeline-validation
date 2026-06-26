@@ -13,6 +13,8 @@ import time
 import pytest
 from unittest.mock import MagicMock, patch
 
+pytestmark = pytest.mark.unit
+
 _ENV_PATCH = {
     "REDIS_HOST": "localhost",
     "POSTGRES_HOST": "localhost",

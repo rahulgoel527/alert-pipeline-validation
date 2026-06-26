@@ -30,7 +30,6 @@ Create and activate a virtual environment:
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate          # macOS/Linux
-# .venv\Scripts\activate           # Windows
 ```
 
 Install test dependencies:
@@ -76,17 +75,14 @@ pytest tests/e2e/test_failure_scenarios.py -v
 
 | Marker | What it covers | Command |
 |--------|---------------|---------|
-| `unit` | Isolated business logic — no services required | `pytest tests/ -m unit -v` |
-| `e2e` | Full pipeline flow: generate → queue → process → store | `pytest tests/ -m e2e -v` |
-| `duplicates` | Fingerprint dedup: detection, ES exclusion, ledger metadata | `pytest tests/ -m duplicates -v` |
-| `failures` | Failure rate validation, ES/Redis resilience, burst stability | `pytest tests/ -m failures -v` |
-| `slow` | Container-restart tests (stops/pauses Docker services) | `pytest tests/ -m slow -v` |
-| `load` | Locust-based throughput tests — see Load Tests section below | — |
+| `unit` |Isolated business logic — no services required | `pytest tests/ -m unit -v` |
+| `e2e` | All end-to-end tests — requires running lab | `pytest tests/ -m e2e -v` |
+| `slow` | Subset of `e2e` — container-restart tests, requires Docker socket | `pytest tests/ -m slow -v` |
 
 Skip slow tests (for faster local iteration or CI without Docker socket):
 
 ```bash
-pytest tests/ -v --ignore=tests/load -m "not slow"
+pytest tests/ -v --ignore=tests/load -m "e2e and not slow"
 ```
 
 ---
@@ -141,7 +137,9 @@ Expected: 19 tests pass in ~60–120 seconds.
 ### Marker
 
 ```bash
-pytest tests/ -m "e2e or duplicates or failures" -v
+pytest tests/ -m e2e -v               # all 19 E2E tests
+pytest tests/ -m "e2e and not slow" -v # skip container-restart tests
+pytest tests/ -m slow -v              # container-restart tests only
 ```
 
 ### Slow Tests
@@ -183,7 +181,7 @@ The current default is **serial execution**, enforced via `-p no:xdist` in `pyte
 To run only these in parallel (requires `pip install pytest-xdist`):
 
 ```bash
-pytest tests/ -m "e2e or duplicates" -v -n auto --ignore=tests/load
+pytest tests/ -m "e2e and not slow" -v -n auto --ignore=tests/load
 ```
 
 **Tests that must run serially:**
@@ -204,12 +202,6 @@ pytest tests/ -m "e2e or duplicates" -v -n auto --ignore=tests/load
 Load tests use [Locust](https://locust.io) to measure throughput and latency under sustained traffic. They are kept separate from the pytest suite and have their own dependency file.
 
 ### Run
-
-Install dependencies first:
-
-```bash
-pip install -r tests/load/requirements.txt
-```
 
 Web UI mode (recommended for manual testing):
 

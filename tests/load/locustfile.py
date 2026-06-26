@@ -28,4 +28,4 @@ class AlertPipelineUser(HttpUser):
         if response.status_code == 200:
             alerts = response.json()
             if alerts:
-                self.client.get(f"/api/alerts/{alerts[0]['alert_id']}")
+                self.client.get(f"/api/alerts/{alerts[0]['alert_id']}", name="/api/alerts/:id")
