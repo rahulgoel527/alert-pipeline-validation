@@ -334,6 +334,8 @@ def generate_alerts(body: dict = Body(default=None)):
             source = str(body["source"])
 
     r = get_redis()
+    if r.llen(QUEUE_KEY) >= 200:
+        raise HTTPException(status_code=429, detail="Queue at capacity, try again later")
     conn = get_pg_conn()
     alert_ids = []
     fingerprints = []

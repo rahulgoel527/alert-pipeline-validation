@@ -1,11 +1,13 @@
 # Alert Pipeline Lab — Setup Guide
+> The code is AI-Assisted but design trade-offs are co-authored by me and reviewed before implementation. 
+> This lab is intended for SDET technical assignment evaluation. 
 
 ## Architecture Overview
 
 ```
 ┌──────────────┐   HTTP POST    ┌──────────────────────────────────────┐
 │  Generator   │───────────────▶│              API  :8000              │
-│  (Python)    │                │  (alert construction + queue writes)  │
+│  (Python)    │                │  (alert construction + queue writes) │
 └──────────────┘                └───────┬──────────────┬───────────────┘
                                         │              │
                                PRODUCED/QUEUED      lpush
@@ -142,6 +144,7 @@ GET  /api/ledger/{alert_id}
 POST /api/generate
      body (all optional): {"count": 1, "source": "manual", "force_fingerprint": "<hex>"}
      → {"generated": N, "alert_ids": [...], "fingerprints": [...]}
+     → 429 {"detail": "Queue at capacity, try again later"} if Redis queue depth ≥ 200
 ```
 
 `force_fingerprint` — supply a previous alert's fingerprint to guarantee the processor's deduplication logic is exercised. Used internally by the generator's 10% duplicate roll.
@@ -345,6 +348,7 @@ This guarantees Postgres counters and ES document counts are always in sync. His
 | Separate dashboard service | Embed in API | Observation plane stays independent of data plane |
 | `source` as top-level ES field | Buried in metadata | Indexable as keyword — enables `?source=test` filtered search for deterministic test assertions |
 | Clean-slate startup | Persistent ledger | Eliminates Postgres/ES count drift across container restarts |
+| 429 on queue depth ≥ 200 | Unbounded queue | Surfaces real backpressure under load; prevents silent false-success when processor is overwhelmed |
 | FastAPI + Uvicorn | Flask | Async, automatic OpenAPI docs, type hints |
 
 ---
