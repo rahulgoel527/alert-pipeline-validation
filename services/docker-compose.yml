@@ -1,0 +1,171 @@
+services:
+
+  redis:
+    image: redis:7-alpine
+    networks: [pipeline_net]
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  postgres:
+    image: postgres:15-alpine
+    ports: ["5432:5432"]
+    environment:
+      POSTGRES_DB: alert_ledger
+      POSTGRES_USER: ledger
+      POSTGRES_PASSWORD: ledger123
+    networks: [pipeline_net]
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ledger -d alert_ledger"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.12.0
+    ports: ["9200:9200"]
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms256m -Xmx512m
+      - http.cors.enabled=true
+      - http.cors.allow-origin=http://localhost:1358,http://127.0.0.1:1358
+      - http.cors.allow-headers=X-Requested-With,X-Auth-Token,Content-Type,Content-Length,Authorization
+      - http.cors.allow-credentials=true
+    networks: [pipeline_net]
+    deploy:
+      resources:
+        limits:
+          cpus: '1.5'
+          memory: 1G
+        reservations:
+          cpus: '1'
+          memory: 512M
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | grep -q '\"status\":\"green\"\\|\"status\":\"yellow\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  api:
+    build: api
+    ports: ["8000:8000"]
+    environment:
+      REDIS_HOST: redis
+      POSTGRES_HOST: postgres
+      POSTGRES_DB: alert_ledger
+      POSTGRES_USER: ledger
+      POSTGRES_PASSWORD: ledger123
+      ELASTICSEARCH_HOST: elasticsearch
+      ES_INDEX: security_alerts
+    networks: [pipeline_net]
+    deploy:
+      resources:
+        limits:
+          cpus: '0.75'
+          memory: 256M
+        reservations:
+          cpus: '0.5'
+          memory: 128M
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')\" || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+      start_period: 10s
+    depends_on:
+      postgres: {condition: service_healthy}
+      elasticsearch: {condition: service_healthy}
+      redis: {condition: service_healthy}
+
+  event_generator:
+    build: event_generator
+    environment:
+      API_HOST: api
+    networks: [pipeline_net]
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 128M
+        reservations:
+          cpus: '0.25'
+          memory: 64M
+    depends_on:
+      api: {condition: service_healthy}
+
+  event_processor:
+    build: event_processor
+    environment:
+      REDIS_HOST: redis
+      POSTGRES_HOST: postgres
+      POSTGRES_DB: alert_ledger
+      POSTGRES_USER: ledger
+      POSTGRES_PASSWORD: ledger123
+      ELASTICSEARCH_HOST: elasticsearch
+      ES_INDEX: security_alerts
+    networks: [pipeline_net]
+    deploy:
+      resources:
+        limits:
+          cpus: '0.75'
+          memory: 256M
+        reservations:
+          cpus: '0.5'
+          memory: 128M
+    depends_on:
+      redis: {condition: service_healthy}
+      postgres: {condition: service_healthy}
+      elasticsearch: {condition: service_healthy}
+
+  dashboard:
+    build: dashboard
+    ports: ["8050:8050"]
+    environment:
+      REDIS_HOST: redis
+      POSTGRES_HOST: postgres
+      POSTGRES_DB: alert_ledger
+      POSTGRES_USER: ledger
+      POSTGRES_PASSWORD: ledger123
+      ELASTICSEARCH_HOST: elasticsearch
+      ES_INDEX: security_alerts
+    networks: [pipeline_net]
+    deploy:
+      resources:
+        limits:
+          cpus: '0.75'
+          memory: 256M
+        reservations:
+          cpus: '0.5'
+          memory: 128M
+    depends_on:
+      postgres: {condition: service_healthy}
+      elasticsearch: {condition: service_healthy}
+      api: {condition: service_healthy}
+
+  dejavu:
+    image: appbaseio/dejavu
+    ports: ["1358:1358"]
+    networks: [pipeline_net]
+
+networks:
+  pipeline_net:
+    driver: bridge
