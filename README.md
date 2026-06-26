@@ -1,4 +1,6 @@
 # Alert Pipeline Lab
+> The code is AI-Assisted but design trade-offs are co-authored and reviewed before implementation. 
+> This lab is intended for SDET technical assignment evaluation. 
 
 A complete 8-service security alert processing pipeline built for SDET technical assignment. Demonstrates end-to-end alert generation, queuing, deduplication, storage, and observability — with a full test suite covering unit, E2E, and load testing.
 
@@ -29,7 +31,7 @@ pytest tests/ -v --ignore=tests/load
 ## Architecture
 
 ```mermaid
-flowchart TD
+flowchart LR
     GEN["Generator\n(every 10s)"]
     API["API :8000\nFastAPI"]
     PG[("PostgreSQL\nLedger")]
