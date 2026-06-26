@@ -13,15 +13,18 @@ A complete 8-service security alert processing pipeline built for SDET technical
 git config core.hooksPath .githooks
 
 # 2. Start the lab
-cd services/
-docker compose up -d
+docker compose -f services/docker-compose.yml up --build -d
+docker compose -f services/docker-compose.yml ps
 
 # 3. Wait ~30s, then validate all 8 services
-python validate_service.py
+python services/validate_service.py
 
 # 4. Run the test suite
+python3 -m venv .venv
+source .venv/bin/activate
+
 pip install -r tests/requirements.txt
-pytest tests/ -v --ignore=tests/load
+pytest tests/ -v
 ```
 
 > The git hook prints a `/update-docs` reminder after any commit that touches `services/` or `tests/`.

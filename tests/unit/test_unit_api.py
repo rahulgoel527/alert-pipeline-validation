@@ -107,6 +107,7 @@ class TestFingerprintAlgorithm:
         mock_conn.cursor.return_value = mock_cursor
 
         mock_redis = MagicMock()
+        mock_redis.llen.return_value = 0
 
         with patch.object(api, "get_pg_conn", return_value=mock_conn), \
              patch.object(api, "get_redis", return_value=mock_redis):
@@ -130,6 +131,7 @@ class TestGenerateAlertsParameters:
         mock_conn.cursor.return_value = mock_cursor
 
         mock_redis = MagicMock()
+        mock_redis.llen.return_value = 0
 
         with patch.object(api, "get_pg_conn", return_value=mock_conn), \
              patch.object(api, "get_redis", return_value=mock_redis):
@@ -154,6 +156,7 @@ class TestGenerateAlertsParameters:
         mock_cursor.__exit__ = MagicMock(return_value=False)
         mock_conn.cursor.return_value = mock_cursor
         mock_redis = MagicMock()
+        mock_redis.llen.return_value = 0
 
         pushed_alerts = []
 
@@ -179,6 +182,7 @@ class TestGenerateAlertsParameters:
         mock_cursor.__exit__ = MagicMock(return_value=False)
         mock_conn.cursor.return_value = mock_cursor
         mock_redis = MagicMock()
+        mock_redis.llen.return_value = 0
 
         pushed_alerts = []
         mock_redis.lpush.side_effect = lambda key, p: pushed_alerts.append(json.loads(p))
@@ -200,6 +204,7 @@ class TestGenerateAlertsParameters:
         mock_cursor.__exit__ = MagicMock(return_value=False)
         mock_conn.cursor.return_value = mock_cursor
         mock_redis = MagicMock()
+        mock_redis.llen.return_value = 0
 
         pushed_alerts = []
         mock_redis.lpush.side_effect = lambda key, p: pushed_alerts.append(json.loads(p))
