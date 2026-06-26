@@ -257,6 +257,18 @@ Appbaseio Dejavu is a browser-based Elasticsearch data explorer. It connects dir
 
 ---
 
+## First-Time Setup
+
+Register the shared git hooks (one-time, per clone):
+
+```bash
+git config core.hooksPath .githooks
+```
+
+This enables the `post-commit` hook that reminds you to run `/update-docs` in Claude Code after changes to `services/` or `tests/`.
+
+---
+
 ## Run
 
 ```bash
@@ -331,8 +343,9 @@ docker compose down -v
 On every `docker compose up`, the API service:
 1. Truncates `alert_ledger` and resets its serial sequence
 2. Drops and recreates the `security_alerts` ES index
+3. Flushes the `alert_queue` Redis list
 
-This guarantees Postgres counters and ES document counts are always in sync. Historical data from a previous run is wiped — the pipeline always starts fresh.
+This guarantees Postgres counters, ES document counts, and the Redis queue are always in sync. Historical data and any leftover queue items from a previous run are wiped — the pipeline always starts fresh.
 
 ---
 

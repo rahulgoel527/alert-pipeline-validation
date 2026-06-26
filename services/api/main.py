@@ -146,6 +146,10 @@ async def lifespan(app: FastAPI):
     es = wait_for_elasticsearch()
     init_es_index(es)
 
+    r = get_redis()
+    r.delete(QUEUE_KEY)
+    log(f"Redis queue '{QUEUE_KEY}' flushed")
+
     yield
 
 
