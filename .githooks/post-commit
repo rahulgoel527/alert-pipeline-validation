@@ -1,0 +1,24 @@
+#!/bin/sh
+changed=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || git diff --name-only HEAD 2>/dev/null)
+
+services_changed=$(echo "$changed" | grep -E "^services/" | grep -v "lab_setup\.md")
+tests_changed=$(echo "$changed" | grep -E "^tests/" | grep -v "Tests\.md")
+
+if [ -z "$services_changed" ] && [ -z "$tests_changed" ]; then
+  exit 0
+fi
+
+echo ""
+echo "┌─ /update-docs reminder ──────────────────────────────────┐"
+
+if [ -n "$services_changed" ]; then
+  echo "│  services/ changed → lab_setup.md + README.md may be stale │"
+fi
+if [ -n "$tests_changed" ]; then
+  echo "│  tests/ changed    → Tests.md + README.md may be stale      │"
+fi
+
+echo "│                                                              │"
+echo "│  Run /update-docs in Claude Code to sync the docs.          │"
+echo "└──────────────────────────────────────────────────────────────┘"
+echo ""
