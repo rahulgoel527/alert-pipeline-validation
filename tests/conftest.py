@@ -13,13 +13,13 @@ def api_client():
         health = client.health()
     except Exception as exc:
         pytest.exit(
-            f"API not reachable at localhost:8000 — run `docker compose up -d` first: {exc}",
+            f"API not reachable at localhost:8000 — run `docker compose -f services/docker-compose.yml up --build -d` first: {exc}",
             returncode=1,
         )
     not_ready = [svc for svc, up in health.get("services", {}).items() if not up]
     if not_ready:
         pytest.exit(
-            f"Lab services not ready — run `docker compose up -d`: {not_ready}",
+            f"Lab services not ready — run `docker compose -f services/docker-compose.yml up --build -d`: {not_ready}",
             returncode=1,
         )
     return client
