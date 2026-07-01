@@ -58,7 +58,7 @@
 
 ## Data Flow
 
-1. **Generator** calls `POST /api/generate` with `{"source": "generator", "count": 1}`
+1. **Generator** calls `POST /api/generate` with `{"count": 1, "payload": {"source": "generator"}}`
 2. **API** constructs the alert payload — assigns UUID, random type/severity/IPs, fingerprint, title prefix — and stores `source` as a first-class field
 3. **API** writes `PRODUCED` → Postgres ledger
 4. **API** pushes alert JSON → Redis `alert_queue` list
@@ -142,7 +142,7 @@ GET  /api/ledger/{alert_id}
      → full ordered state history for one alert from Postgres
 
 POST /api/generate
-     body (all optional): {"count": 1, "source": "manual", "force_fingerprint": "<hex>"}
+     body (all optional): {"count": 1, "payload": {"source": "manual"}, "force_fingerprint": "<hex>"}
      → {"generated": N, "alert_ids": [...], "fingerprints": [...]}
      → 429 {"detail": "Queue at capacity, try again later"} if Redis queue depth ≥ 200
 ```
@@ -188,11 +188,11 @@ OpenAPI docs available at **http://localhost:8000/docs** when running.
 
 - Polls Redis continuously using `BLPOP` with 5s timeout
 - Writes `PROCESSING` to ledger before doing any work
-- **2% stuck:** simulates a hung worker — returns immediately after `PROCESSING` write, leaving the alert in `PROCESSING` state. The reaper thread (see below) will transition it to `FAILED` after the timeout elapses.
-- **5% failure:** simulates a processing error — writes `FAILED` with error metadata immediately
-- **10% slowness:** adds a 2–10 second delay before processing
 - **Deduplication:** searches ES for a matching fingerprint; on hit writes `DUPLICATE_DROPPED` and discards the alert without writing to ES
 - **Success path:** `es.index(index, id=alert_id, document=alert)` then writes `STORED`
+- **Exception path:** writes `FAILED` with error metadata
+
+Stuck/slow/failure simulation is intentionally absent from the processor code — those chaos scenarios are covered by the manual playbook in `tests/EXPLORATORY_CHAOS_TESTING.md`.
 
 ### Stuck-Alert Reaper
 
@@ -319,7 +319,7 @@ curl -X POST http://localhost:8000/api/generate
 # Bulk with source label
 curl -X POST http://localhost:8000/api/generate \
   -H "Content-Type: application/json" \
-  -d '{"count": 50, "source": "manual"}'
+  -d '{"count": 50, "payload": {"source": "manual"}}'
 
 # Filter to only manually-triggered alerts
 curl "http://localhost:8000/api/alerts/search?source=manual"
@@ -373,7 +373,7 @@ This guarantees Postgres counters, ES document counts, and the Redis queue are a
 - **Single ES node** — no HA, no replica shards; ES restart loses all indexed alerts (mitigated by clean-slate startup)
 - **No TLS or authentication** — lab environment only
 - **Fingerprint dedup window is 60 seconds** — coarse; high burst generation of the same alert type can produce unintended duplicates
-- **Stuck alerts (2%) sit in `PROCESSING` until the reaper fires** — with default settings this is up to 1 hour; set `STUCK_TIMEOUT_MINUTES` and `REAPER_INTERVAL_SECONDS` lower for faster test runs
+- **Stuck-alert scenarios require manual injection** — see `tests/EXPLORATORY_CHAOS_TESTING.md` for how to trigger and observe the reaper path
 - **No dead-letter queue** — `FAILED` alerts are logged in the ledger but never retried
 - **New Postgres connection per ledger write** in the processor — acceptable at lab throughput, not production-safe
 - **Dejavu connects browser-direct to ES:9200** — CORS is pre-enabled; do not expose port 9200 publicly

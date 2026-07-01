@@ -54,7 +54,7 @@ pytest tests/ --collect-only --ignore=tests/load
 pytest tests/ -v --ignore=tests/load
 ```
 
-Expected: 62 tests pass (43 unit + 19 E2E). Unit tests complete instantly; E2E tests take ~60–120 seconds.
+Expected: 63 tests pass (44 unit + 19 E2E). Unit tests complete instantly; E2E tests take ~60–120 seconds.
 
 ### By test directory
 
@@ -101,7 +101,7 @@ pytest tests/unit/ -v
 
 | File | Logic tested | Why E2E can't catch it |
 |------|-------------|------------------------|
-| `unit/test_unit_processor.py` | `is_duplicate()` (hit/miss/NotFoundError), `process_alert()` failure injection (2% stuck, 5% fail, 10% slow), `log_ledger()` metadata serialization | The 2% stuck path is invisible until the reaper fires (60 min); failure thresholds can't be verified probabilistically |
+| `unit/test_unit_processor.py` | `is_duplicate()` (hit/miss/NotFoundError), `process_alert()` DUPLICATE_DROPPED / STORED / FAILED paths, `log_ledger()` metadata serialization | Duplicate check and ES write failure modes can't be triggered reliably via E2E; stuck/slow/chaos scenarios are covered by the manual playbook |
 | `unit/test_unit_api.py` | Fingerprint 60s window contract, `generate_alerts()` count cap (max 100) and source prefix logic, accounting balance formula | Window boundary only breaks under load; count cap is never reached by tests generating 5–50 alerts |
 | `unit/test_unit_reaper.py` | FAILED ledger entry shape, `stuck_duration_minutes` typed as float not string, SQL query contract (DISTINCT ON, PROCESSING filter, parameterised timeout) | Reaper fires after 60 min — outside any E2E timeout; metadata type bugs silently corrupt the ledger |
 
@@ -154,46 +154,7 @@ These tests always restore the containers they touch — even on failure — so 
 
 ### Parallel Execution
 
-Most E2E tests are parallel-safe: they generate their own alerts, track them by ID, and assert only on the state of those specific IDs. They never read aggregate counters and never mutate shared infrastructure.
-
-A small subset cannot run in parallel — they either assert on pipeline-wide counts that other concurrent tests would pollute, or they stop/pause shared infrastructure that other tests depend on.
-
-The current default is **serial execution**, enforced via `-p no:xdist` in `pytest.ini`. This is a pragmatic choice for simplicity, not a fundamental constraint. If faster CI is needed, the right design is to split the suite into two runs: parallel for atomic tests, serial for the non-parallel subset.
-
-**Tests safe to run in parallel** — track only the alert IDs they generate, assert on per-ID ledger state, and do not touch shared counters or infrastructure:
-
-| Test | Why it's parallel-safe |
-|------|------------------------|
-| `test_alert_generation_produces_to_queue` | Asserts PRODUCED state for its own alert ID only |
-| `test_alert_flows_through_complete_pipeline` | Tracks a single alert ID from queue to ES |
-| `test_alert_lifecycle_states_are_complete` | Asserts state ordering for one alert ID |
-| `test_alert_data_integrity` | Retrieves from ES by its own alert ID |
-| `test_multiple_alerts_all_processed` | Polls terminal state per tracked ID, no count assertions |
-| `test_duplicate_alert_is_detected` | Reads existing DUPLICATE_DROPPED entries, no count threshold |
-| `test_duplicate_not_stored_in_elasticsearch` | Checks ES absence for a known alert ID |
-| `test_original_alert_still_stored_correctly` | Queries ES by fingerprint for a known duplicate pair |
-| `test_duplicate_logged_in_ledger_with_metadata` | Reads metadata for a known alert ID |
-| `test_different_fingerprints_both_stored` | Tracks two specific IDs it generated |
-| `test_failed_alert_logged_in_ledger` | Reads FAILED entries, no count assertion |
-| `test_failed_alert_not_in_elasticsearch` | Checks ES absence for known FAILED IDs |
-| `test_system_continues_after_failure` | Tracks its own generated IDs only |
-
-To run only these in parallel (requires `pip install pytest-xdist`):
-
-```bash
-pytest tests/ -m "e2e and not slow" -v -n auto --ignore=tests/load
-```
-
-**Tests that must run serially:**
-
-| Test | Intent | Why parallel is unsafe |
-|------|--------|------------------------|
-| `test_pipeline_stats_are_accurate` | Verifies `/api/stats` counters match actual ledger state after a known number of alerts | Uses `baseline_stats` to measure counter growth. A concurrent test generating alerts lands in the same counting window, inflating the delta and breaking the assertion. |
-| `test_accounting_balanced_after_duplicates` | Verifies `accounting_balanced=true` holds after duplicates are introduced | Same counter-window problem — a concurrent burst can flip `accounting_balanced` to false during the assertion window even if this test's own alerts are balanced. |
-| `test_elasticsearch_unavailable_handling` | Verifies processor marks alerts FAILED when ES is unreachable | Stops the ES container. Any concurrent test storing or retrieving an alert will fail with a connection error unrelated to its own logic. Requires exclusive access to the infrastructure. |
-| `test_redis_connection_recovery` | Verifies processor resumes after a Redis pause | Pauses the Redis container. Any concurrent test polling for a terminal alert state will stall until Redis resumes, causing spurious timeouts. |
-| `test_pipeline_stability_under_burst` | Verifies 50 alerts all reach terminal state within a time bound | Floods the single-worker processor queue with 50 alerts. Concurrent tests waiting on their own alerts will hit timeouts because the queue is saturated. |
-| `test_processing_latency_within_bounds` | Verifies average PROCESSING→STORED latency stays under 5 seconds | Latency measurement is sensitive to queue depth. A concurrent burst from another test increases processing time, invalidating the latency assertion. |
+The current default is **serial execution**, enforced via `-p no:xdist` in `pytest.ini`. Tests that stop/pause containers or assert on pipeline-wide counters require exclusive access to shared infrastructure. If faster CI is needed, split the suite: parallel for per-ID tests, serial for infrastructure/counter tests.
 
 ---
 
@@ -251,13 +212,26 @@ while True:
 
 ---
 
+## Exploratory + Chaos Testing
+
+Not all scenarios can be automated deterministically. Scenarios involving long timeouts (reaper), race conditions (ES refresh), mid-transaction crashes, or infrastructure data loss are documented as a manual playbook:
+
+```bash
+# Open the playbook:
+cat tests/EXPLORATORY_CHAOS_TESTING.md
+```
+
+See [EXPLORATORY_CHAOS_TESTING.md](EXPLORATORY_CHAOS_TESTING.md) for 6 runnable scenarios mapped to the assignment's 5 production issues: data loss (Redis kill), partial degradation (incomplete results), burst slowdown, duplicate race condition, stuck processing (reaper), and mid-transaction crash (consistency gap).
+
+---
+
 ## Design Tradeoffs
 
 | Decision | Alternative | Reason |
 |----------|-------------|--------|
 | `LedgerClient` queries Postgres directly | Assert state only via the API | Gives tests an independent source of truth — catches bugs the API layer could mask |
 | Session-scoped `api_client` and `ledger_client` | Function-scoped (fresh connection per test) | Reuses connections, faster suite; per-test `baseline_stats` snapshots isolate noise instead |
-| `allow_stuck=True` in burst tests | Hard timeout per alert | The processor simulates 2% hung workers — ~1 in 50 alerts never completes; hard timeout would flake |
+| `allow_stuck=True` in burst tests | Hard timeout per alert | Stuck alerts can occur via chaos injection (see EXPLORATORY_CHAOS_TESTING.md); hard timeout would flake |
 | `baseline_stats` snapshot per test | Truncate tables before each test | Non-destructive; tests run against a live lab without pausing the background generator |
 | `@pytest.mark.slow` for container-restart tests | Always run container-restart tests | Docker socket not always available (CI, shared envs); the marker lets teams opt in |
 | Serial execution enforced via `-p no:xdist` | Parallel execution with `pytest-xdist` | Shared pipeline state (counters, containers, queue) makes parallel runs unreliable — see Parallel Execution section |

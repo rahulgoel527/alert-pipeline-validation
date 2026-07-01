@@ -64,8 +64,8 @@ stateDiagram-v2
     QUEUED --> PROCESSING
     PROCESSING --> STORED : unique alert, ES write ok
     PROCESSING --> DUPLICATE_DROPPED : fingerprint already in ES
-    PROCESSING --> FAILED : ES unavailable or 5% simulated failure
-    PROCESSING --> PROCESSING : 2% stuck (reaper fires after 60 min)
+    PROCESSING --> FAILED : ES unavailable or exception
+    PROCESSING --> PROCESSING : stuck (reaper fires after 60 min)
 ```
 
 ### Fingerprint Dedup Window
@@ -100,7 +100,7 @@ flowchart TD
         U1["Fingerprint 60s window contract"]
         U2["generate_alerts() count cap + source prefix"]
         U3["is_duplicate() hit / miss / NotFoundError"]
-        U4["process_alert() failure injection\n(2% stuck · 5% fail · 10% slow)"]
+        U4["process_alert() dedup + STORED / FAILED paths"]
         U5["log_ledger() metadata serialisation"]
         U6["Reaper SQL contract + FAILED entry shape"]
     end
