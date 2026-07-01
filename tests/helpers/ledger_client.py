@@ -1,5 +1,3 @@
-from datetime import datetime
-
 import psycopg2
 import psycopg2.extras
 
@@ -76,28 +74,6 @@ class LedgerClient:
             finally:
                 cur_conn.close()
 
-    def get_stuck_alerts(self, threshold_seconds=60) -> list[str]:
-        """Return alert_ids stuck in PROCESSING longer than threshold_seconds."""
-        with self._conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT DISTINCT ON (alert_id) alert_id, state, timestamp
-                    FROM alert_ledger
-                    ORDER BY alert_id, id DESC
-                    """,
-                )
-                rows = cur.fetchall()
-
-        now = datetime.utcnow()
-        stuck = []
-        for alert_id, state, ts in rows:
-            if state == "PROCESSING":
-                age = (now - ts).total_seconds()
-                if age > threshold_seconds:
-                    stuck.append(alert_id)
-        return stuck
-
     def get_state_counts(self) -> dict:
         """Return counts of all alerts by their most recent state."""
         with self._conn() as conn:
@@ -128,13 +104,3 @@ class LedgerClient:
             return (stored_ts - proc_ts).total_seconds() * 1000
         return None
 
-    def get_alerts_produced_after(self, timestamp) -> list[str]:
-        """Return alert_ids with a PRODUCED entry after timestamp."""
-        with self._conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT DISTINCT alert_id FROM alert_ledger "
-                    "WHERE state = 'PRODUCED' AND timestamp > %s",
-                    (timestamp,),
-                )
-                return [r[0] for r in cur.fetchall()]

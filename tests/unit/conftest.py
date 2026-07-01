@@ -2,16 +2,31 @@
 Shared fixtures for unit tests.
 All tests here run without any running services — everything is mocked.
 """
-import json
+import os
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+
+_ENV_PATCH = {
+    "REDIS_HOST": "localhost",
+    "POSTGRES_HOST": "localhost",
+    "POSTGRES_DB": "alerts",
+    "POSTGRES_USER": "alerts",
+    "POSTGRES_PASSWORD": "secret",
+    "ELASTICSEARCH_HOST": "localhost",
+    "ES_INDEX": "security_alerts",
+    "STUCK_TIMEOUT_MINUTES": "60",
+    "REAPER_INTERVAL_SECONDS": "300",
+}
+
+# Patch env vars at import time — before pytest collects test modules.
+# This is necessary because service modules read os.environ at module level.
+os.environ.update(_ENV_PATCH)
 
 
 @pytest.fixture
 def mock_es():
     """Elasticsearch client mock with a configurable hit count."""
     es = MagicMock()
-    # Default: no hits
     es.search.return_value = {"hits": {"total": {"value": 0}, "hits": []}}
     return es
 
@@ -21,7 +36,6 @@ def mock_pg_conn():
     """Psycopg2 connection mock whose cursor returns configurable rows."""
     conn = MagicMock()
     cursor = MagicMock()
-    # Support `with conn:` and `with conn.cursor() as cur:`
     conn.__enter__ = MagicMock(return_value=conn)
     conn.__exit__ = MagicMock(return_value=False)
     cursor.__enter__ = MagicMock(return_value=cursor)
