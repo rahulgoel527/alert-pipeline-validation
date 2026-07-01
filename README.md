@@ -2,7 +2,7 @@
 > The code is AI-Assisted but design trade-offs are co-authored and reviewed before implementation. 
 > This lab is intended for SDET technical assignment evaluation. 
 
-A complete 8-service security alert processing pipeline built for SDET technical assignment. Demonstrates end-to-end alert generation, queuing, deduplication, storage, and observability — with a full test suite covering unit, E2E, and load testing.
+A security alert processing pipeline with 4 Python services, backed by Redis, Postgres, and Elasticsearch. Built for SDET technical assignment.
 
 ---
 
@@ -16,7 +16,7 @@ git config core.hooksPath .githooks
 docker compose -f services/docker-compose.yml --profile pipeline up --build -d
 docker compose -f services/docker-compose.yml ps
 
-# 3. Wait ~30s, then validate all 8 services
+# 3. Wait ~30s, then validate the pipeline
 python services/validate_service.py
 
 # 4. Run the test suite
@@ -37,12 +37,15 @@ pytest tests/ -v
 flowchart LR
     GEN["Generator\n(every 10s)"]
     API["API :8000\nFastAPI"]
-    PG[("PostgreSQL\nLedger")]
-    RQ[("Redis\nalert_queue")]
     PROC["Processor\n(single-threaded)"]
-    ES[("Elasticsearch\n:9200")]
     DASH["Dashboard\n:8050"]
     DEJ["Dejavu\n:1358"]
+
+    subgraph infra["Infrastructure"]
+        PG[("PostgreSQL\nLedger")]
+        RQ[("Redis\nalert_queue")]
+        ES[("Elasticsearch\n:9200")]
+    end
 
     GEN -- "POST /api/generate" --> API
     API -- "PRODUCED → QUEUED" --> PG
@@ -79,16 +82,23 @@ sha256(source_ip + alert_type + floor(unix_time / 60))[:16]
 
 ## Services
 
+**Pipeline services (Python):**
+
 | Service | Port | Role |
 |---------|------|------|
-| redis | — | Alert queue (`alert_queue` list) |
+| api | 8000 | Alert factory, REST endpoints, schema owner |
+| processor | — | Deduplicates alerts, writes to ES |
+| generator | — | Calls `POST /api/generate` every 10s, 10% duplicate rate |
+| dashboard | 8050 | Live pipeline stats, auto-refresh every 5s |
+
+**Infrastructure dependencies (off-the-shelf):**
+
+| Dependency | Port | Role |
+|------------|------|------|
+| redis | 6379 | Alert queue (`alert_queue` list) |
 | postgres | 5432 | State ledger — every lifecycle transition |
 | elasticsearch | 9200 | Final alert store (searchable, keyword-indexed) |
-| api | 8000 | FastAPI: alert factory, REST endpoints, schema owner |
-| generator | — | Calls `POST /api/generate` every 10s, 10% duplicate rate |
-| processor | — | Consumes Redis, deduplicates, writes to ES |
-| dashboard | 8050 | Live pipeline stats, auto-refresh every 5s |
-| dejavu | 1358 | Browser-based ES data explorer |
+| dejavu | 1358 | Browser-based ES data explorer (optional) |
 
 ---
 

@@ -37,22 +37,29 @@
                  └──────────────┘        └──────────────┘
 ```
 
-**8 services:** redis · postgres · elasticsearch · generator · processor · api · dashboard · dejavu
+**4 Python services:** api · processor · generator · dashboard — backed by Redis, Postgres, and Elasticsearch
 
 ---
 
 ## Services
 
-| Service | Image / Build | Port | Role |
-|---------|--------------|------|------|
-| redis | redis:7-alpine | — | Alert queue (`alert_queue` list) |
+**Pipeline services (Python):**
+
+| Service | Port | Role |
+|---------|------|------|
+| api | 8000 | FastAPI: schema owner, alert factory, REST endpoints |
+| processor | — | Consumes Redis, deduplicates, writes to ES |
+| generator | — | Pure HTTP client — calls `POST /api/generate` |
+| dashboard | 8050 | Live pipeline stats, auto-refresh every 5s |
+
+**Infrastructure dependencies (off-the-shelf):**
+
+| Dependency | Image | Port | Role |
+|------------|-------|------|------|
+| redis | redis:7-alpine | 6379 | Alert queue (`alert_queue` list) |
 | postgres | postgres:15-alpine | 5432 | State ledger — every lifecycle transition |
 | elasticsearch | elastic 8.12.0 | 9200 | Final alert store (searchable) |
-| api | python:3.12-alpine | 8000 | FastAPI: schema owner, alert factory, REST endpoints |
-| generator | python:3.12-alpine | — | Pure HTTP client — calls `POST /api/generate` |
-| processor | python:3.12-alpine | — | Consumes Redis, deduplicates, writes to ES |
-| dashboard | python:3.12-alpine | 8050 | Live pipeline stats, auto-refresh every 5s |
-| dejavu | appbaseio/dejavu | 1358 | ES data browser (browser → ES direct) |
+| dejavu | appbaseio/dejavu | 1358 | ES data browser (optional) |
 
 ---
 
