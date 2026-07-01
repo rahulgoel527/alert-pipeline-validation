@@ -108,7 +108,7 @@ sha256(source_ip + alert_type + floor(unix_time / 60))[:16]
 
 ```mermaid
 flowchart TD
-    subgraph unit["Unit Tests (55) — no services needed"]
+    subgraph unit["Unit Tests (46) — no services needed"]
         U1["Fingerprint 60s window contract"]
         U2["generate_alerts() count cap + source prefix"]
         U3["is_duplicate() hit / miss / NotFoundError"]
@@ -118,11 +118,11 @@ flowchart TD
         U7["/dashboard/health — all infra + processor states"]
     end
 
-    subgraph e2e["E2E Tests (19) — requires running lab"]
+    subgraph e2e["E2E Tests (41) — requires running lab"]
         E1["Full pipeline flow\nPRODUCED → QUEUED → STORED in ES"]
         E2["Duplicate detection\nDUPLICATE_DROPPED · ES exclusion · ledger metadata"]
         E3["Failure scenarios\nFAILED state · ES exclusion · pipeline recovery"]
-        subgraph slow["Slow Tests (3) — Docker socket required"]
+        subgraph slow["Slow Tests (4) — Docker socket required"]
             S1["ES unavailable → FAILED"]
             S2["Redis pause → resume"]
             S3["Burst stability (50 alerts)"]

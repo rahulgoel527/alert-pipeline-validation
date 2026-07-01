@@ -54,7 +54,7 @@ pytest tests/ --collect-only --ignore=tests/load
 pytest tests/ -v --ignore=tests/load
 ```
 
-Expected: 63 tests pass (44 unit + 19 E2E). Unit tests complete instantly; E2E tests take ~60–120 seconds.
+Expected: 87 tests pass (46 unit + 41 E2E). Unit tests complete instantly; E2E tests take ~60–120 seconds.
 
 ### By test directory
 
@@ -69,6 +69,7 @@ pytest tests/e2e/ -v                # E2E tests only — requires running lab
 pytest tests/e2e/test_e2e_flow.py -v
 pytest tests/e2e/test_duplicates.py -v
 pytest tests/e2e/test_failure_scenarios.py -v
+pytest tests/e2e/test_api_endpoints.py -v
 ```
 
 ### By marker
@@ -103,7 +104,8 @@ pytest tests/unit/ -v
 |------|-------------|------------------------|
 | `unit/test_unit_processor.py` | `is_duplicate()` (hit/miss/NotFoundError), `process_alert()` DUPLICATE_DROPPED / STORED / FAILED paths, `log_ledger()` metadata serialization | Duplicate check and ES write failure modes can't be triggered reliably via E2E; stuck/slow/chaos scenarios are covered by the manual playbook |
 | `unit/test_unit_api.py` | Fingerprint 60s window contract, `generate_alerts()` count cap (max 100) and source prefix logic, accounting balance formula | Window boundary only breaks under load; count cap is never reached by tests generating 5–50 alerts |
-| `unit/test_unit_reaper.py` | FAILED ledger entry shape, `stuck_duration_minutes` typed as float not string, SQL query contract (DISTINCT ON, PROCESSING filter, parameterised timeout) | Reaper fires after 60 min — outside any E2E timeout; metadata type bugs silently corrupt the ledger |
+| `unit/test_unit_reaper.py` | `reaper_loop()` writes FAILED entry with correct metadata for a stuck alert, skips INSERT when no stuck alerts, SQL contract (DISTINCT ON, PROCESSING filter, `make_interval` timeout) | Reaper fires after 60 min — outside any E2E timeout; tests call the real `reaper_loop()` with mocked Postgres and `time.sleep` |
+| `unit/test_unit_dashboard_health.py` | `GET /dashboard/health` response: all-healthy path, API unreachable, processor states (healthy/stalled/down/not_started/unknown), Redis/Postgres/ES down | Health endpoint depends on four independent infra connections — failure combinations can't be triggered reliably in E2E |
 
 ### Marker
 
@@ -124,7 +126,7 @@ E2E tests validate observable pipeline behaviour end-to-end: generating alerts t
 pytest tests/e2e/ -v
 ```
 
-Expected: 19 tests pass in ~60–120 seconds.
+Expected: 41 tests pass in ~60–120 seconds.
 
 ### What's covered
 
@@ -133,11 +135,12 @@ Expected: 19 tests pass in ~60–120 seconds.
 | `e2e/test_e2e_flow.py` | Full pipeline flow: generate → PRODUCED/QUEUED in ledger → PROCESSING → STORED in ES; data integrity; multi-alert batch processing; stats accuracy |
 | `e2e/test_duplicates.py` | Fingerprint dedup: DUPLICATE_DROPPED state, ES exclusion, ledger metadata, accounting balance after duplicates |
 | `e2e/test_failure_scenarios.py` | FAILED state logging, ES exclusion of failed alerts, pipeline recovery, ES/Redis unavailability, burst stability, processing latency bounds |
+| `e2e/test_api_endpoints.py` | API surface: health, list/search/get alerts, ledger endpoint, generate (force_fingerprint, payload override, count clamping), stats schema |
 
 ### Marker
 
 ```bash
-pytest tests/ -m e2e -v               # all 19 E2E tests
+pytest tests/ -m e2e -v               # all 41 E2E tests
 pytest tests/ -m "e2e and not slow" -v # skip container-restart tests
 pytest tests/ -m slow -v              # container-restart tests only
 ```
