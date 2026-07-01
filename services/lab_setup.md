@@ -273,8 +273,10 @@ This enables the `post-commit` hook that reminds you to run `/update-docs` in Cl
 
 ```bash
 cd services/
-docker compose up -d
+docker compose --profile pipeline up -d
 ```
+
+`--profile pipeline` activates the four app services (`api`, `event_processor`, `event_generator`, `dashboard`). Without it, only the infrastructure services (`redis`, `postgres`, `elasticsearch`, `dejavu`) start — useful for local development where you run app services directly on the host.
 
 Wait ~30 seconds for Elasticsearch to initialise, then check all 8 services are up:
 
