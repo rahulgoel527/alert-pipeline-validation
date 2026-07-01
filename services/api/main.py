@@ -1,90 +1,23 @@
 import json
 import os
-import time
-import uuid
-import hashlib
 import random
+import time
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
 
-import psycopg2
-import redis as redis_lib
-from elasticsearch import Elasticsearch, NotFoundError
+from elasticsearch import NotFoundError
 from fastapi import Body, FastAPI, HTTPException, Query
 
+from common import (
+    QUEUE_KEY, get_pg_conn, get_es, get_redis, log,
+    wait_for_postgres, wait_for_elasticsearch,
+)
+from common.stats import get_pipeline_stats
+from common.alert_factory import (
+    ALERT_TYPES, SEVERITIES, build_alert,
+)
+
 SERVICE = "api"
-POSTGRES_HOST = os.environ["POSTGRES_HOST"]
-POSTGRES_DB = os.environ["POSTGRES_DB"]
-POSTGRES_USER = os.environ["POSTGRES_USER"]
-POSTGRES_PASSWORD = os.environ["POSTGRES_PASSWORD"]
-ELASTICSEARCH_HOST = os.environ["ELASTICSEARCH_HOST"]
 ES_INDEX = os.environ["ES_INDEX"]
-REDIS_HOST = os.environ["REDIS_HOST"]
-QUEUE_KEY = "alert_queue"
-
-ALERT_TYPES = ["brute_force", "malware", "phishing", "port_scan", "data_exfiltration"]
-SEVERITIES = ["low", "medium", "high", "critical"]
-TITLES = {
-    "brute_force": "Brute Force Login Attempt",
-    "malware": "Malware Detected",
-    "phishing": "Phishing Email Detected",
-    "port_scan": "Port Scan Detected",
-    "data_exfiltration": "Data Exfiltration Attempt",
-}
-DESCRIPTIONS = {
-    "brute_force": "Multiple failed SSH logins from {src}",
-    "malware": "Malicious process detected on {dst}",
-    "phishing": "Suspicious email link clicked from {src}",
-    "port_scan": "SYN scan from {src} targeting {dst}",
-    "data_exfiltration": "Large outbound transfer from {src} to {dst}",
-}
-
-
-def log(msg):
-    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{ts}] [{SERVICE}] {msg}", flush=True)
-
-
-def get_pg_conn():
-    return psycopg2.connect(
-        host=POSTGRES_HOST, dbname=POSTGRES_DB,
-        user=POSTGRES_USER, password=POSTGRES_PASSWORD
-    )
-
-
-def get_es():
-    return Elasticsearch(f"http://{ELASTICSEARCH_HOST}:9200")
-
-
-def get_redis():
-    return redis_lib.Redis(host=REDIS_HOST, decode_responses=True)
-
-
-def wait_for_postgres():
-    while True:
-        try:
-            conn = get_pg_conn()
-            conn.close()
-            log("Postgres ready")
-            return
-        except psycopg2.OperationalError:
-            log("Waiting for Postgres...")
-            time.sleep(1)
-
-
-def wait_for_elasticsearch():
-    while True:
-        try:
-            es = get_es()
-            health = es.cluster.health()
-            if health["status"] in ("green", "yellow"):
-                log("Elasticsearch ready")
-                return es
-        except Exception:
-            pass
-        log("Waiting for Elasticsearch...")
-        time.sleep(2)
-
 
 ES_MAPPINGS = {
     "properties": {
@@ -121,7 +54,7 @@ def init_postgres_schema():
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_alert_id ON alert_ledger(alert_id)")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_state ON alert_ledger(state)")
                 cur.execute("TRUNCATE TABLE alert_ledger RESTART IDENTITY")
-        log("Postgres schema ready — ledger cleared")
+        log(SERVICE, "Postgres schema ready — ledger cleared")
     finally:
         conn.close()
 
@@ -130,25 +63,25 @@ def init_es_index(es):
     try:
         if es.indices.exists(index=ES_INDEX):
             es.indices.delete(index=ES_INDEX)
-            log(f"ES index '{ES_INDEX}' dropped")
+            log(SERVICE, f"ES index '{ES_INDEX}' dropped")
         es.indices.create(index=ES_INDEX, mappings=ES_MAPPINGS)
-        log(f"ES index '{ES_INDEX}' created fresh")
+        log(SERVICE, f"ES index '{ES_INDEX}' created fresh")
     except Exception as exc:
-        log(f"FATAL: failed to initialise ES index '{ES_INDEX}': {exc}")
+        log(SERVICE, f"FATAL: failed to initialise ES index '{ES_INDEX}': {exc}")
         raise
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    wait_for_postgres()
+    wait_for_postgres(SERVICE)
     init_postgres_schema()
 
-    es = wait_for_elasticsearch()
+    es = wait_for_elasticsearch(SERVICE)
     init_es_index(es)
 
     r = get_redis()
     r.delete(QUEUE_KEY)
-    log(f"Redis queue '{QUEUE_KEY}' flushed")
+    log(SERVICE, f"Redis queue '{QUEUE_KEY}' flushed")
 
     yield
 
@@ -234,46 +167,7 @@ def get_alert(alert_id: str):
 def get_stats():
     conn = get_pg_conn()
     try:
-        with conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    WITH latest AS (
-                        SELECT DISTINCT ON (alert_id) alert_id, state, timestamp
-                        FROM alert_ledger
-                        ORDER BY alert_id, id DESC
-                    )
-                    SELECT
-                        COUNT(*) FILTER (WHERE state = 'QUEUED')          AS currently_queued,
-                        COUNT(*) FILTER (WHERE state = 'PROCESSING')      AS currently_processing,
-                        COUNT(*) FILTER (WHERE state = 'STORED')          AS total_stored,
-                        COUNT(*) FILTER (WHERE state = 'FAILED')          AS total_failed,
-                        COUNT(*) FILTER (WHERE state = 'DUPLICATE_DROPPED') AS total_duplicates
-                    FROM latest
-                """)
-                row = cur.fetchone()
-                currently_queued, currently_processing, total_stored, total_failed, total_duplicates = (
-                    int(row[0]), int(row[1]), int(row[2]), int(row[3]), int(row[4])
-                )
-
-                cur.execute(
-                    "SELECT COUNT(DISTINCT alert_id) FROM alert_ledger WHERE state = 'PRODUCED'"
-                )
-                total_produced = int(cur.fetchone()[0])
-
-                accounted = total_stored + total_failed + total_duplicates + currently_queued + currently_processing
-                unaccounted = max(0, total_produced - accounted)
-
-                cur.execute("SELECT MAX(timestamp) FROM alert_ledger")
-                last_ts = cur.fetchone()[0]
-                last_event_at = last_ts.isoformat() + "Z" if last_ts else None
-
-                cur.execute("""
-                    SELECT AVG(EXTRACT(EPOCH FROM (s.timestamp - p.timestamp)) * 1000)
-                    FROM alert_ledger p
-                    JOIN alert_ledger s ON p.alert_id = s.alert_id
-                    WHERE p.state = 'PROCESSING' AND s.state = 'STORED'
-                """)
-                avg_ms = cur.fetchone()[0]
+        stats = get_pipeline_stats(conn)
     finally:
         conn.close()
 
@@ -282,19 +176,8 @@ def get_stats():
     except Exception:
         queue_depth = -1
 
-    return {
-        "total_produced": total_produced,
-        "currently_queued": currently_queued,
-        "currently_processing": currently_processing,
-        "total_stored": total_stored,
-        "total_failed": total_failed,
-        "total_duplicates": total_duplicates,
-        "unaccounted": unaccounted,
-        "accounting_balanced": (unaccounted == 0),
-        "last_event_at": last_event_at,
-        "avg_processing_latency_ms": round(float(avg_ms), 1) if avg_ms else 0.0,
-        "queue_depth": queue_depth,
-    }
+    stats["queue_depth"] = queue_depth
+    return stats
 
 
 @app.get("/api/ledger/{alert_id}")
@@ -328,14 +211,15 @@ def get_ledger(alert_id: str):
 def generate_alerts(body: dict = Body(default=None)):
     count = 1
     force_fingerprint = None
-    source = None
+    payload_override = None
     if body:
-        if "count" in body:
-            count = max(1, min(int(body["count"]), 100))
-        if "force_fingerprint" in body:
-            force_fingerprint = str(body["force_fingerprint"])
-        if "source" in body:
-            source = str(body["source"])
+        count = max(1, min(int(body.get("count", 1)), 100))
+        force_fingerprint = body.get("force_fingerprint")
+        payload_override = body.get("payload")
+
+    source = None
+    if payload_override and "source" in payload_override:
+        source = payload_override["source"]
 
     r = get_redis()
     if r.llen(QUEUE_KEY) >= 200:
@@ -348,49 +232,31 @@ def generate_alerts(body: dict = Body(default=None)):
         for _ in range(count):
             alert_type = random.choice(ALERT_TYPES)
             severity = random.choice(SEVERITIES)
-            src = f"192.168.{random.randint(1, 254)}.{random.randint(1, 254)}"
-            dst = f"10.0.{random.randint(1, 254)}.{random.randint(1, 254)}"
+            window = int(time.time() // 60)
 
-            if force_fingerprint:
-                fingerprint = force_fingerprint
-            else:
-                window = int(time.time() // 60)
-                fingerprint = hashlib.sha256(f"{src}{alert_type}{window}".encode()).hexdigest()[:16]
+            alert = build_alert(
+                alert_type, severity, source, window,
+                force_fingerprint=force_fingerprint,
+            )
 
-            alert_id = str(uuid.uuid4())
-            title = TITLES[alert_type]
-            if source:
-                title = f"[{source.upper()}] {title}"
-
-            alert = {
-                "alert_id": alert_id,
-                "title": title,
-                "description": DESCRIPTIONS[alert_type].format(src=src, dst=dst),
-                "severity": severity,
-                "source_ip": src,
-                "dest_ip": dst,
-                "alert_type": alert_type,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "fingerprint": fingerprint,
-                "source": source or "unknown",
-                "metadata": {"source_service": SERVICE},
-            }
+            if payload_override:
+                alert.update(payload_override)
 
             with conn:
                 with conn.cursor() as cur:
                     cur.execute(
                         "INSERT INTO alert_ledger (alert_id, state, source_service, metadata) VALUES (%s, %s, %s, %s)",
-                        (alert_id, "PRODUCED", SERVICE, json.dumps({}))
+                        (alert["alert_id"], "PRODUCED", SERVICE, json.dumps({}))
                     )
                     cur.execute(
                         "INSERT INTO alert_ledger (alert_id, state, source_service, metadata) VALUES (%s, %s, %s, %s)",
-                        (alert_id, "QUEUED", SERVICE, json.dumps({}))
+                        (alert["alert_id"], "QUEUED", SERVICE, json.dumps({}))
                     )
             r.lpush(QUEUE_KEY, json.dumps(alert))
-            alert_ids.append(alert_id)
-            fingerprints.append(fingerprint)
+            alert_ids.append(alert["alert_id"])
+            fingerprints.append(alert["fingerprint"])
     finally:
         conn.close()
 
-    log(f"Generated {count} alert(s) via API")
+    log(SERVICE, f"Generated {count} alert(s) via API")
     return {"generated": count, "alert_ids": alert_ids, "fingerprints": fingerprints}

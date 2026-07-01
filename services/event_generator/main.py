@@ -1,18 +1,14 @@
 import os
 import random
 import time
-from datetime import datetime
 
 import requests
+
+from common import log
 
 SERVICE = "event_generator"
 API_HOST = os.environ.get("API_HOST", "api")
 API_URL = f"http://{API_HOST}:8000"
-
-
-def log(msg):
-    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{ts}] [{SERVICE}] {msg}", flush=True)
 
 
 def wait_for_services():
@@ -23,13 +19,13 @@ def wait_for_services():
             if resp.ok:
                 not_ready = [svc for svc, up in resp.json().get("services", {}).items() if not up]
                 if not not_ready:
-                    log("All services ready")
+                    log(SERVICE, "All services ready")
                     break
-                log(f"Services not ready yet: {not_ready}")
+                log(SERVICE, f"Services not ready yet: {not_ready}")
             else:
-                log(f"API health returned {resp.status_code}, waiting...")
+                log(SERVICE, f"API health returned {resp.status_code}, waiting...")
         except requests.RequestException as e:
-            log(f"API not reachable yet ({e}), waiting...")
+            log(SERVICE, f"API not reachable yet ({e}), waiting...")
         time.sleep(2)
 
 
@@ -42,14 +38,14 @@ def generate_alerts(count=1, force_fingerprint=None):
         resp = requests.post(f"{API_URL}/api/generate", json=body, timeout=10)
         resp.raise_for_status()
     except requests.RequestException as e:
-        log(f"generate failed: {e}")
+        log(SERVICE, f"generate failed: {e}")
         return None
 
     data = resp.json()
     alert_ids = data.get("alert_ids", [])
     fingerprints = data.get("fingerprints", [])
     dup_note = " (forced duplicate)" if force_fingerprint else ""
-    log(f"Generated {len(alert_ids)} alert(s){dup_note}: {', '.join(alert_ids)}")
+    log(SERVICE, f"Generated {len(alert_ids)} alert(s){dup_note}: {', '.join(alert_ids)}")
 
     return fingerprints[0] if fingerprints else None
 
