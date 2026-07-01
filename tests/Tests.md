@@ -54,7 +54,7 @@ pytest tests/ --collect-only --ignore=tests/load
 pytest tests/ -v --ignore=tests/load
 ```
 
-Expected: 76 tests pass (35 unit + 41 E2E). Unit tests complete instantly; E2E tests take ~60–120 seconds.
+Expected: 74 tests pass (35 unit + 39 E2E). Unit tests complete instantly; E2E tests take ~60–120 seconds.
 
 ### By test directory
 
@@ -125,7 +125,7 @@ E2E tests validate observable pipeline behaviour end-to-end: generating alerts t
 pytest tests/e2e/ -v
 ```
 
-Expected: 41 tests pass in ~60–120 seconds.
+Expected: 39 tests pass in ~60–120 seconds.
 
 ### What's covered
 
@@ -133,13 +133,13 @@ Expected: 41 tests pass in ~60–120 seconds.
 |------|--------------|
 | `e2e/test_e2e_flow.py` | Full pipeline flow: generate → PRODUCED/QUEUED in ledger → PROCESSING → STORED in ES; data integrity; multi-alert batch processing; stats accuracy |
 | `e2e/test_duplicates.py` | Fingerprint dedup: DUPLICATE_DROPPED state, ES exclusion, ledger metadata, accounting balance after duplicates |
-| `e2e/test_failure_scenarios.py` | FAILED state logging, ES exclusion of failed alerts, pipeline recovery, ES/Redis unavailability, burst stability, processing latency bounds |
+| `e2e/test_failure_scenarios.py` | FAILED state logging and error metadata, pipeline recovery after failure, ES/Redis unavailability, burst stability, processing latency bounds |
 | `e2e/test_api_endpoints.py` | API surface: health, list/search/get alerts, ledger endpoint, generate (force_fingerprint, payload override, count clamping), stats schema |
 
 ### Marker
 
 ```bash
-pytest tests/ -m e2e -v               # all 41 E2E tests
+pytest tests/ -m e2e -v               # all 39 E2E tests
 pytest tests/ -m "e2e and not slow" -v # skip container-restart tests
 pytest tests/ -m slow -v              # container-restart tests only
 ```

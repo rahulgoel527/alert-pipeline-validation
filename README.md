@@ -117,7 +117,7 @@ flowchart TD
         U6["Reaper SQL contract + FAILED entry shape"]
     end
 
-    subgraph e2e["E2E Tests (41) — requires running lab"]
+    subgraph e2e["E2E Tests (39) — requires running lab"]
         E1["Full pipeline flow\nPRODUCED → QUEUED → STORED in ES"]
         E2["Duplicate detection\nDUPLICATE_DROPPED · ES exclusion · ledger metadata"]
         E3["Failure scenarios\nFAILED state · ES exclusion · pipeline recovery"]
