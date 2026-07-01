@@ -128,7 +128,7 @@ class TestGenerateAlertsParameters:
 
         with patch.object(api, "get_pg_conn", return_value=mock_conn), \
              patch.object(api, "get_redis", return_value=mock_redis):
-            api.generate_alerts({"count": 1, "source": "generator"})
+            api.generate_alerts({"count": 1, "payload": {"source": "generator"}})
 
         assert pushed_alerts, "No alert was pushed to Redis"
         assert pushed_alerts[0]["title"].startswith("[GENERATOR]")

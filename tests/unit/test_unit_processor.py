@@ -48,14 +48,6 @@ class TestIsDuplicate:
 # process_alert() — processing paths
 # ---------------------------------------------------------------------------
 
-@pytest.fixture(autouse=False)
-def no_fault_injection():
-    """Patch random.random to always return 1.0, bypassing all fault injection in process_alert."""
-    with patch('event_processor.main.random.random', return_value=1.0):
-        yield
-
-
-@pytest.mark.usefixtures("no_fault_injection")
 class TestProcessAlert:
     """
     process_alert() flow:
