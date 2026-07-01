@@ -222,8 +222,8 @@ def generate_alerts(body: dict = Body(default=None)):
         payload_override = body.get("payload")
 
     source = None
-    if payload_override and "source" in payload_override:
-        source = payload_override["source"]
+    if body and "source" in body:
+        source = str(body["source"])
 
     r = get_redis()
     if r.llen(QUEUE_KEY) >= 200:

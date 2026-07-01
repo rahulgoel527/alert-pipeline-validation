@@ -1,5 +1,6 @@
 import json
 import os
+import random
 import threading
 import time
 
@@ -35,7 +36,7 @@ def is_duplicate(es, fingerprint):
         return resp["hits"]["total"]["value"] > 0
 
     except Exception as exc:
-        log.warning("is_duplicate check failed for fingerprint %s: %s", fingerprint, exc)
+        log(SERVICE, f"is_duplicate check failed for fingerprint {fingerprint}: {exc}")
         return False
 
 def process_alert(alert, es, pg_conn):
@@ -51,6 +52,25 @@ def process_alert(alert, es, pg_conn):
 
     log_ledger(pg_conn, alert_id, "PROCESSING")
     log(SERVICE, f"Processing alert {alert_id} ({alert.get('alert_type')}, {alert.get('severity')})")
+
+    # Simulate stuck/hung worker (2%) — intentional scenario for testing stuck-alert detection.
+    # The reaper thread will transition this to FAILED after STUCK_TIMEOUT_MINUTES.
+    if random.random() < 0.02:
+        log(SERVICE, f"STUCK alert {alert_id} — simulated hung worker (will timeout in {STUCK_TIMEOUT_MINUTES}m)")
+        return
+
+    # Simulate occasional failure (5%)
+    if random.random() < 0.05:
+        error_msg = "Simulated processing failure"
+        log_ledger(pg_conn, alert_id, "FAILED", {"error": error_msg})
+        log(SERVICE, f"FAILED alert {alert_id}: {error_msg}")
+        return
+
+    # Simulate occasional slowness (10%)
+    if random.random() < 0.10:
+        delay = random.uniform(2.0, 10.0)
+        log(SERVICE, f"Slow processing alert {alert_id} (delay {delay:.1f}s)")
+        time.sleep(delay)
 
     if is_duplicate(es, fingerprint):
         log_ledger(pg_conn, alert_id, "DUPLICATE_DROPPED", {"fingerprint": fingerprint})
@@ -72,6 +92,7 @@ def reaper_loop():
         f"checking every {REAPER_INTERVAL_SECONDS}s")
     while True:
         time.sleep(REAPER_INTERVAL_SECONDS)
+        pg_conn = None
         try:
             pg_conn = get_pg_conn()
             with pg_conn.cursor() as pg_cursor:
@@ -107,7 +128,8 @@ def reaper_loop():
         except Exception as exc:
             log(SERVICE, f"Reaper error: {exc}")
         finally:
-            pg_conn.close()
+            if pg_conn is not None:
+                pg_conn.close()
 
 def main():
     wait_for_postgres(SERVICE)
