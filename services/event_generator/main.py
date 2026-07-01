@@ -30,7 +30,7 @@ def wait_for_services():
 
 
 def generate_alerts(count=1, force_fingerprint=None):
-    body = {"count": count, "source": "generator"}
+    body = {"count": count, "payload": {"source": "generator"}}
     if force_fingerprint:
         body["force_fingerprint"] = force_fingerprint
 
