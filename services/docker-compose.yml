@@ -69,15 +69,13 @@ services:
     build:
       context: .
       dockerfile: api/Dockerfile
-    ports: ["8000:8000"]
+    profiles: [pipeline]
+    env_file: .env
     environment:
       REDIS_HOST: redis
       POSTGRES_HOST: postgres
-      POSTGRES_DB: alert_ledger
-      POSTGRES_USER: ledger
-      POSTGRES_PASSWORD: ledger123
       ELASTICSEARCH_HOST: elasticsearch
-      ES_INDEX: security_alerts
+    ports: ["8000:8000"]
     networks: [pipeline_net]
     deploy:
       resources:
@@ -102,6 +100,8 @@ services:
     build:
       context: .
       dockerfile: event_generator/Dockerfile
+    profiles: [pipeline]
+    env_file: .env
     environment:
       API_HOST: api
     networks: [pipeline_net]
@@ -120,14 +120,12 @@ services:
     build:
       context: .
       dockerfile: event_processor/Dockerfile
+    profiles: [pipeline]
+    env_file: .env
     environment:
       REDIS_HOST: redis
       POSTGRES_HOST: postgres
-      POSTGRES_DB: alert_ledger
-      POSTGRES_USER: ledger
-      POSTGRES_PASSWORD: ledger123
       ELASTICSEARCH_HOST: elasticsearch
-      ES_INDEX: security_alerts
     networks: [pipeline_net]
     deploy:
       resources:
@@ -146,15 +144,13 @@ services:
     build:
       context: .
       dockerfile: dashboard/Dockerfile
-    ports: ["8050:8050"]
+    profiles: [pipeline]
+    env_file: .env
     environment:
       REDIS_HOST: redis
       POSTGRES_HOST: postgres
-      POSTGRES_DB: alert_ledger
-      POSTGRES_USER: ledger
-      POSTGRES_PASSWORD: ledger123
       ELASTICSEARCH_HOST: elasticsearch
-      ES_INDEX: security_alerts
+    ports: ["8050:8050"]
     networks: [pipeline_net]
     deploy:
       resources:

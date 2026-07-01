@@ -13,7 +13,7 @@ A complete 8-service security alert processing pipeline built for SDET technical
 git config core.hooksPath .githooks
 
 # 2. Start the lab
-docker compose -f services/docker-compose.yml up --build -d
+docker compose -f services/docker-compose.yml --profile pipeline up --build -d
 docker compose -f services/docker-compose.yml ps
 
 # 3. Wait ~30s, then validate all 8 services
@@ -96,7 +96,7 @@ sha256(source_ip + alert_type + floor(unix_time / 60))[:16]
 
 ```mermaid
 flowchart TD
-    subgraph unit["Unit Tests (43) — no services needed"]
+    subgraph unit["Unit Tests (44) — no services needed"]
         U1["Fingerprint 60s window contract"]
         U2["generate_alerts() count cap + source prefix"]
         U3["is_duplicate() hit / miss / NotFoundError"]
