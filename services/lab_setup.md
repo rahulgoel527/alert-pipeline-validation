@@ -50,16 +50,16 @@
 | api | 8000 | FastAPI: schema owner, alert factory, REST endpoints |
 | processor | — | Consumes Redis, deduplicates, writes to ES |
 | generator | — | Pure HTTP client — calls `POST /api/generate` |
+
+**Infrastructure (always-on):**
+
+| Service | Port | Role |
+|---------|------|------|
 | dashboard | 8050 | Live pipeline stats, auto-refresh every 5s |
-
-**Infrastructure dependencies (off-the-shelf):**
-
-| Dependency | Image | Port | Role |
-|------------|-------|------|------|
-| redis | redis:7-alpine | 6379 | Alert queue (`alert_queue` list) |
-| postgres | postgres:15-alpine | 5432 | State ledger — every lifecycle transition |
-| elasticsearch | elastic 8.12.0 | 9200 | Final alert store (searchable) |
-| dejavu | appbaseio/dejavu | 1358 | ES data browser (optional) |
+| redis | 6379 | Alert queue (`alert_queue` list) |
+| postgres | 5432 | State ledger — every lifecycle transition |
+| elasticsearch | 9200 | Final alert store (searchable) |
+| dejavu | 1358 | ES data browser (optional) |
 
 ---
 
@@ -123,7 +123,7 @@ CREATE INDEX idx_state    ON alert_ledger(state);
 
 **States:** `PRODUCED` → `QUEUED` → `PROCESSING` → `STORED` | `FAILED` | `DUPLICATE_DROPPED`
 
-The API service is the **schema owner** — it runs `CREATE TABLE IF NOT EXISTS` and indexes on startup. It also **truncates the ledger and resets the sequence** on every startup to guarantee Postgres and Elasticsearch are always in sync.
+The API service is the **schema owner** — it runs `CREATE TABLE IF NOT EXISTS` and indexes on startup. Data persists across restarts; use `POST /api/reset` to wipe state when you need a clean slate.
 
 ---
 
@@ -152,6 +152,11 @@ POST /api/generate
      body (all optional): {"count": 1, "payload": {"source": "manual"}, "force_fingerprint": "<hex>"}
      → {"generated": N, "alert_ids": [...], "fingerprints": [...]}
      → 429 {"detail": "Queue at capacity, try again later"} if Redis queue depth ≥ 200
+
+POST /api/reset
+     → {"reset": true}
+     Truncates the Postgres ledger, drops and recreates the ES index, flushes the Redis queue.
+     Use this when you need a guaranteed clean slate — e.g., before reproducing a specific defect.
 ```
 
 `force_fingerprint` — supply a previous alert's fingerprint to guarantee the processor's deduplication logic is exercised. Used internally by the generator's 10% duplicate roll.
@@ -238,7 +243,22 @@ For faster testing (e.g. verify the reaper fires in a short test run), set both 
 - Stuck alerts banner (processing > 60s) with alert IDs and timestamps
 - Recent alerts table: Alert ID · Title (with source prefix) · Type · Severity · Source IP · Dest IP · Timestamp · State
 - **"Browse in Dejavu →"** button — opens http://localhost:1358 pre-pointed at the `security_alerts` index
+- **"Reset Pipeline"** button — wipes Postgres ledger, ES index, and Redis queue; requires typing `wipedata` in the confirm dialog
 - Auto-refreshes every 5 seconds via `fetch()` — no page reload
+
+**Dashboard endpoints (port 8050):**
+
+```
+GET  /dashboard/health        → infra + processor health snapshot
+     → {"redis": {"status": "healthy|down"}, "postgres": {"status": "healthy|down"},
+        "elasticsearch": {"status": "healthy|down"},
+        "api": {"status": "healthy|unreachable", "latency_ms": 42},
+        "processor": {"status": "healthy|stalled|down|not_started|unknown", "last_seen_s": 12}}
+GET  /dashboard/stats         → pipeline accounting snapshot (same shape as /api/stats)
+GET  /dashboard/alerts?size=N → recent alerts from ES, newest first (default 20, max 100)
+GET  /dashboard/stuck         → alerts stuck in PROCESSING > 60s
+POST /dashboard/reset         → wipe all data (ledger + ES index + Redis queue) → {"reset": true}
+```
 
 ---
 
@@ -260,7 +280,7 @@ Appbaseio Dejavu is a browser-based Elasticsearch data explorer. It connects dir
 
 - Docker Desktop ≥ 24 (or Docker Engine + Compose plugin ≥ 2.20)
 - 4 GB RAM available to Docker (Elasticsearch needs ~512 MB heap)
-- Python 3.11+ on the host (for `validate_service.py` only)
+- Python 3.12 on the host (matches the `python:3.12-alpine` Dockerfiles)
 
 ---
 
@@ -268,23 +288,60 @@ Appbaseio Dejavu is a browser-based Elasticsearch data explorer. It connects dir
 
 ```bash
 cd services/
-docker compose --profile pipeline up -d
+docker compose -p alertlab up -d
+docker compose -p alertlab --profile pipeline up -d
 ```
 
-`--profile pipeline` activates the four app services (`api`, `event_processor`, `event_generator`, `dashboard`). Without it, only the infrastructure services (`redis`, `postgres`, `elasticsearch`, `dejavu`) start — useful for local development where you run app services directly on the host.
+The first command starts infrastructure (`redis`, `postgres`, `elasticsearch`, `dejavu`, `dashboard`). The second activates the three pipeline services (`api`, `event_processor`, `event_generator`).
 
 Wait ~30 seconds for Elasticsearch to initialise, then check all services are up:
 
 ```bash
-docker compose ps
+docker compose -p alertlab ps
 ```
+
+---
+
+## Local Development
+
+Run the three pipeline services on the host against Docker infra (useful for debugging with a local debugger or faster iteration).
+
+**Setup (one-time, from repo root):**
+
+```bash
+./setup_venv.sh
+source .venv/bin/activate
+```
+
+The script enforces Python 3.12 (matching the Dockerfiles). If `python3.12` is not on your PATH, install it via [pyenv](https://github.com/pyenv/pyenv) or [python.org](https://www.python.org/downloads/).
+
+```bash
+# Start infra + dashboard first
+cd services/
+docker compose -p alertlab up -d
+
+# In a new shell — set PYTHONPATH so Python finds the common/ package
+cd services/
+export PYTHONPATH=$(pwd)
+
+# Terminal 1 — API
+uvicorn api.main:app --host 0.0.0.0 --port 8000
+
+# Terminal 2 — Processor
+python event_processor/main.py
+
+# Terminal 3 — Generator
+python event_generator/main.py
+```
+
+Stop by pressing `Ctrl+C` in each terminal. Infra and dashboard remain running.
 
 ---
 
 ## Validate
 
 ```bash
-pip install requests psycopg2-binary
+# With the .venv active (setup_venv.sh installs all deps including requests/psycopg2-binary)
 python validate_service.py
 ```
 
@@ -327,35 +384,36 @@ curl "http://localhost:8000/api/alerts/search?severity=critical&alert_type=brute
 
 ## Tear Down
 
-**Stop pipeline services only** (leave infra running — useful when iterating):
+**Stop pipeline services only** (leave infra + dashboard running — useful when iterating):
 ```bash
-docker compose stop api event_processor event_generator dashboard
+docker compose -p alertlab stop api event_processor event_generator
 ```
 
-**Stop and remove pipeline containers** (infra stays up):
+**Stop and remove pipeline containers** (infra + dashboard stays up):
 ```bash
-docker compose rm -f -s api event_processor event_generator dashboard
+docker compose -p alertlab rm -f -s api event_processor event_generator
 ```
 
 **Stop everything** (infra + pipeline):
 ```bash
-docker compose --profile pipeline down
+docker compose -p alertlab down
 ```
 
-Add `-v` to also remove volumes (Postgres data). Omit it to keep data across restarts — though the API truncates the ledger on every startup anyway (see Clean Slate below).
+Add `-v` to also remove volumes (Postgres data). Omit it to keep data across restarts.
 
-> Note: `docker compose --profile pipeline down` tears down the shared network, which also stops infra containers. Use the targeted `stop`/`rm` commands above when you only want to restart the pipeline services.
+> Note: `docker compose -p alertlab down` tears down the shared network, which also stops infra containers. Use the targeted `stop`/`rm` commands above when you only want to restart the pipeline services.
 
 ---
 
-## Clean Slate on Every Startup
+## Clean Slate on Demand
 
-On every `docker compose up`, the API service:
-1. Truncates `alert_ledger` and resets its serial sequence
-2. Drops and recreates the `security_alerts` ES index
-3. Flushes the `alert_queue` Redis list
+Data persists across restarts. To wipe all state and start fresh, call:
 
-This guarantees Postgres counters, ES document counts, and the Redis queue are always in sync. Historical data and any leftover queue items from a previous run are wiped — the pipeline always starts fresh.
+```bash
+curl -X POST http://localhost:8000/api/reset
+```
+
+This truncates `alert_ledger`, drops and recreates the `security_alerts` ES index, and flushes the `alert_queue` Redis list. Useful before reproducing a specific defect or resetting a test environment without restarting any services.
 
 ---
 
@@ -370,7 +428,7 @@ This guarantees Postgres counters, ES document counts, and the Redis queue are a
 | Custom pipeline | Off-shelf SIEM | Full control: injectable failures, testable dedup, observable state machine |
 | Separate dashboard service | Embed in API | Observation plane stays independent of data plane |
 | `source` as top-level ES field | Buried in metadata | Indexable as keyword — enables `?source=test` filtered search for deterministic test assertions |
-| Clean-slate startup | Persistent ledger | Eliminates Postgres/ES count drift across container restarts |
+| `POST /api/reset` for clean slate | Wipe on every startup | Preserves data across restarts; explicit reset avoids wiping state needed to reproduce a defect |
 | 429 on queue depth ≥ 200 | Unbounded queue | Surfaces real backpressure under load; prevents silent false-success when processor is overwhelmed |
 | FastAPI + Uvicorn | Flask | Async, automatic OpenAPI docs, type hints |
 
@@ -378,7 +436,7 @@ This guarantees Postgres counters, ES document counts, and the Redis queue are a
 
 ## Known Limitations
 
-- **Single ES node** — no HA, no replica shards; ES restart loses all indexed alerts (mitigated by clean-slate startup)
+- **Single ES node** — no HA, no replica shards; ES restart loses all indexed alerts (use `POST /api/reset` to re-sync after ES recovery)
 - **No TLS or authentication** — lab environment only
 - **Fingerprint dedup window is 60 seconds** — coarse; high burst generation of the same alert type can produce unintended duplicates
 - **Stuck-alert scenarios require manual injection** — see `tests/EXPLORATORY_CHAOS_TESTING.md` for how to trigger and observe the reaper path

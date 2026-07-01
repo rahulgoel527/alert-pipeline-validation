@@ -71,6 +71,12 @@ except Exception as e:
     check("Dashboard reachable", False, str(e))
 
 try:
+    r = requests.get(f"{DASHBOARD}/dashboard/stats", timeout=5)
+    check("Dashboard /dashboard/stats returns 200", r.status_code == 200)
+except Exception as e:
+    check("Dashboard /dashboard/stats reachable", False, str(e))
+
+try:
     r = requests.get(f"{ES}/_cluster/health", timeout=5)
     status = r.json().get("status", "")
     check("Elasticsearch cluster healthy", status in ("green", "yellow"), f"status={status}")
@@ -88,7 +94,7 @@ except Exception as e:
 print("\n2. Alert generation")
 
 try:
-    r = requests.post(f"{API}/api/generate", json={"count": 10, "source": "HealthCheck"}, timeout=10)
+    r = requests.post(f"{API}/api/generate", json={"count": 10, "payload": {"source": "HealthCheck"}}, timeout=10)
     data = r.json()
     generated = data.get("generated", 0)
     check("POST /api/generate returns 200", r.status_code == 200)

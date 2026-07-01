@@ -16,9 +16,11 @@ Manual playbook for scenarios that can't be automated deterministically. Each ma
 
 ```bash
 cd services/
-docker compose ps                    # All 8 services running
+docker compose -p alertlab ps                    # All services running
 curl -s http://localhost:8000/api/health | jq .  # All services true
 ```
+
+> All `docker compose` commands in this playbook require the compose file and must be run from `services/`. Run `cd services/` once before starting any scenario.
 
 Tools needed: `jq`, `docker`, `curl`
 
@@ -36,7 +38,7 @@ Tools needed: `jq`, `docker`, `curl`
 
 ```bash
 # 1. Pause processor (stop draining)
-docker compose pause event_processor
+docker compose -p alertlab pause event_processor
 
 # 2. Generate 10 alerts
 RESPONSE=$(curl -s -X POST http://localhost:8000/api/generate \
@@ -45,17 +47,17 @@ RESPONSE=$(curl -s -X POST http://localhost:8000/api/generate \
 echo $RESPONSE | jq '.alert_ids'
 
 # 3. Confirm queued in Redis
-docker compose exec redis redis-cli LLEN alert_queue
+docker compose -p alertlab exec redis redis-cli LLEN alert_queue
 
 # 4. Kill Redis (SIGKILL — no flush, data lost)
-docker compose kill redis
+docker compose -p alertlab kill redis
 
 # 5. Restart Redis (fresh, empty queue)
-docker compose up -d redis
+docker compose -p alertlab up -d redis
 sleep 2
 
 # 6. Unpause processor
-docker compose unpause event_processor
+docker compose -p alertlab unpause event_processor
 sleep 5
 ```
 
@@ -67,7 +69,7 @@ curl -s http://localhost:8000/api/stats | jq '{total_produced, total_stored, tot
 # Expected: accounting_balanced = false, unaccounted >= 10
 
 # Alerts stuck at QUEUED forever:
-docker exec -it $(docker compose ps -q postgres) psql -U postgres -d alerts -c "
+docker exec -it $(docker compose -p alertlab ps -q postgres) psql -U postgres -d alerts -c "
 SELECT count(*) as lost FROM alert_ledger
 WHERE state = 'QUEUED'
 AND alert_id NOT IN (
@@ -95,7 +97,7 @@ Permanent data loss — the at-most-once delivery gap of BLPOP. Production fix: 
 # === ES down — alerts ingested but invisible ===
 
 # 1. Stop Elasticsearch
-docker compose stop elasticsearch
+docker compose -p alertlab stop elasticsearch
 
 # 2. Health check
 curl -s http://localhost:8000/api/health | jq .
@@ -111,17 +113,17 @@ curl -s http://localhost:8000/api/alerts?size=5
 # Expected: error or empty
 
 # 5. Check processor logs — should show FAILED (ES write exceptions)
-docker compose logs event_processor --since 30s | tail -10
+docker compose -p alertlab logs event_processor --since 30s | tail -10
 
 # 6. Restart ES and verify recovery
-docker compose start elasticsearch
+docker compose -p alertlab start elasticsearch
 sleep 30
 curl -s http://localhost:8000/api/health | jq .
 
 # === Redis down — writes fail, reads still work ===
 
 # 7. Stop Redis
-docker compose stop redis
+docker compose -p alertlab stop redis
 
 # 8. Try to generate (requires Redis for queue)
 curl -s -X POST http://localhost:8000/api/generate \
@@ -132,7 +134,7 @@ curl -s -X POST http://localhost:8000/api/generate \
 curl -s http://localhost:8000/api/alerts?size=2 | jq 'length'
 
 # 10. Restart
-docker compose start redis
+docker compose -p alertlab start redis
 sleep 2
 ```
 
@@ -202,7 +204,7 @@ If latency doesn't recover or `accounting_balanced` stays false after drain, the
 curl -s http://localhost:8000/api/stats | jq '{currently_queued, currently_processing}'
 
 # 2. Pause processor — queue both alerts before processing starts
-docker compose pause event_processor
+docker compose -p alertlab pause event_processor
 
 # 3. Generate 2 alerts with SAME fingerprint
 RESP_A=$(curl -s -X POST http://localhost:8000/api/generate \
@@ -219,7 +221,7 @@ echo "Alert A: $ID_A"
 echo "Alert B: $ID_B"
 
 # 4. Unpause — processor pops both nearly simultaneously
-docker compose unpause event_processor
+docker compose -p alertlab unpause event_processor
 sleep 5
 
 # 5. Check results
@@ -259,13 +261,13 @@ STUCK_TIMEOUT_MINUTES: "1"
 REAPER_INTERVAL_SECONDS: "10"
 ```
 
-Then: `docker compose up -d event_processor`
+Then: `docker compose -p alertlab up -d event_processor`
 
 ### Steps
 
 ```bash
 # 1. Pause processor
-docker compose pause event_processor
+docker compose -p alertlab pause event_processor
 
 # 2. Generate 5 alerts
 RESPONSE=$(curl -s -X POST http://localhost:8000/api/generate \
@@ -274,14 +276,14 @@ RESPONSE=$(curl -s -X POST http://localhost:8000/api/generate \
 echo $RESPONSE | jq '.alert_ids'
 
 # 3. Unpause — processor starts consuming
-docker compose unpause event_processor
+docker compose -p alertlab unpause event_processor
 
 # 4. Kill immediately mid-processing
 sleep 0.3
-docker compose kill event_processor
+docker compose -p alertlab kill event_processor
 
 # 5. Restart processor (reaper thread starts fresh)
-docker compose up -d event_processor
+docker compose -p alertlab up -d event_processor
 
 # 6. Wait for reaper to fire (STUCK_TIMEOUT=1min + REAPER_INTERVAL=10s)
 echo "Waiting 75s for reaper..."
@@ -324,7 +326,7 @@ Temporarily add a sleep to widen the crash window in `services/event_processor/m
 import time; time.sleep(5)
 ```
 
-Rebuild: `docker compose up -d --build event_processor`
+Rebuild: `docker compose -p alertlab up -d --build event_processor`
 
 Also set fast reaper: `STUCK_TIMEOUT_MINUTES=1`, `REAPER_INTERVAL_SECONDS=10`
 
@@ -341,7 +343,7 @@ echo "Alert: $ALERT_ID"
 sleep 3
 
 # 3. Kill processor mid-transaction
-docker compose kill event_processor
+docker compose -p alertlab kill event_processor
 
 # 4. Check: alert IS in ES
 curl -s http://localhost:8000/api/alerts/$ALERT_ID | jq '.alert_id'
@@ -352,7 +354,7 @@ curl -s http://localhost:8000/api/ledger/$ALERT_ID | jq '.[].state'
 # Expected: PRODUCED, QUEUED, PROCESSING
 
 # 6. Restart processor, wait for reaper
-docker compose up -d event_processor
+docker compose -p alertlab up -d event_processor
 sleep 75
 
 # 7. Ledger now shows FAILED (reaper), but alert is still in ES
@@ -373,9 +375,8 @@ Accounting says FAILED, ES says it exists. Investigation API shows the alert but
 ## Reset Between Scenarios
 
 ```bash
-cd services/
-docker compose down -v
-docker compose up -d
-sleep 15
+docker compose -p alertlab down -v
+docker compose -p alertlab --profile pipeline up -d
+sleep 30
 curl -s http://localhost:8000/api/health | jq .
 ```

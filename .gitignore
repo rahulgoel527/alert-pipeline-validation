@@ -7,3 +7,5 @@
 .pytest_cache/
 graphify-out/
 docs/demo_script.md
+.agents
+.claude/skills

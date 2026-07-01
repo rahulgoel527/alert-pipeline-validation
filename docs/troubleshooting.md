@@ -8,7 +8,7 @@
 | Alerts visible via API (`/api/alerts`) | 9 |
 | Missing alerts | 3 |
 | Processing latency increase | 5× (200ms → 1000ms+) |
-| Service crash | None (`docker compose ps` shows all healthy) |
+| Service crash | None (`docker compose -p alertlab ps` shows all healthy) |
 
 ---
 
@@ -53,22 +53,22 @@ The gap above (12 produced, 9 stored, 3 stuck in `currently_processing`) is the 
 
 ```bash
 # Errors and failures in event_processor (last 10 minutes)
-docker compose logs event_processor --since 10m | grep -E "FAILED|ERROR|timeout|exception"
+docker compose -p alertlab logs event_processor --since 10m | grep -E "FAILED|ERROR|timeout|exception"
 
 # Confirm how many alerts the event_generator says it produced
-docker compose logs event_generator --since 10m | grep "PRODUCED"
+docker compose -p alertlab logs event_generator --since 10m | grep "PRODUCED"
 
 # How many PROCESSING transitions did the event_processor log?
-docker compose logs event_processor --since 10m | grep "PROCESSING" | wc -l
+docker compose -p alertlab logs event_processor --since 10m | grep "PROCESSING" | wc -l
 
 # Any ES write errors?
-docker compose logs event_processor --since 10m | grep -E "elasticsearch|es_client|write"
+docker compose -p alertlab logs event_processor --since 10m | grep -E "elasticsearch|es_client|write"
 
 # Slow-path alerts (event_processor logs slowness flag)
-docker compose logs event_processor --since 10m | grep -i "slow"
+docker compose -p alertlab logs event_processor --since 10m | grep -i "slow"
 
 # Full event_processor tail for context
-docker compose logs event_processor 2>&1 | tail -80
+docker compose -p alertlab logs event_processor 2>&1 | tail -80
 ```
 
 **Key signals:**
@@ -106,7 +106,7 @@ redis-cli -h localhost INFO clients | grep connected_clients
 Connect to the Postgres container:
 
 ```bash
-docker exec -it $(docker compose ps -q postgres) psql -U postgres -d alerts
+docker exec -it $(docker compose -p alertlab ps -q postgres) psql -U postgres -d alerts
 ```
 
 **Find the 3 missing alerts (non-terminal state):**
@@ -225,10 +225,10 @@ curl -s localhost:9200/_nodes/stats/breaker?pretty | python -m json.tool
 docker stats --no-stream
 
 # Service health status
-docker compose ps
+docker compose -p alertlab ps
 
 # Check for OOM kills or restarts
-docker inspect $(docker compose ps -q event_processor) | python -m json.tool | grep -A5 '"State"'
+docker inspect $(docker compose -p alertlab ps -q event_processor) | python -m json.tool | grep -A5 '"State"'
 ```
 
 **What to look for:**
@@ -328,7 +328,7 @@ redis-cli -h localhost LLEN alert_queue
 
 ```bash
 # Step 1: Find stuck alerts (2 minutes)
-docker exec -it $(docker compose ps -q postgres) psql -U postgres -d alerts -c "
+docker exec -it $(docker compose -p alertlab ps -q postgres) psql -U postgres -d alerts -c "
 SELECT alert_id, timestamp, NOW() - timestamp AS stuck_for
 FROM alert_ledger
 WHERE state = 'PROCESSING'
@@ -359,7 +359,7 @@ curl -s localhost:9200/_cluster/health?pretty
 
 ```bash
 # Step 1: Pull DUPLICATE_DROPPED alerts and their fingerprints (2 minutes)
-docker exec -it $(docker compose ps -q postgres) psql -U postgres -d alerts -c "
+docker exec -it $(docker compose -p alertlab ps -q postgres) psql -U postgres -d alerts -c "
 SELECT alert_id, metadata FROM alert_ledger
 WHERE state = 'DUPLICATE_DROPPED'
 ORDER BY timestamp DESC LIMIT 10;"
@@ -384,7 +384,7 @@ curl -s localhost:9200/security_alerts/_search \
 
 ```bash
 # Step 1: Find alerts stuck at QUEUED (2 minutes)
-docker exec -it $(docker compose ps -q postgres) psql -U postgres -d alerts -c "
+docker exec -it $(docker compose -p alertlab ps -q postgres) psql -U postgres -d alerts -c "
 SELECT q.alert_id, q.timestamp AS queued_at
 FROM alert_ledger q
 WHERE q.state = 'QUEUED'
@@ -397,7 +397,7 @@ ORDER BY q.timestamp;"
 redis-cli -h localhost LLEN alert_queue
 
 # Step 3: Check for container restarts (1 minute)
-docker inspect $(docker compose ps -q event_processor) | python -m json.tool | grep -A3 '"RestartCount"'
+docker inspect $(docker compose -p alertlab ps -q event_processor) | python -m json.tool | grep -A3 '"RestartCount"'
 ```
 
 | Result | Interpretation |

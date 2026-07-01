@@ -12,7 +12,7 @@
 Verify the lab is up:
 
 ```bash
-docker compose ps
+docker compose -p alertlab ps
 # All services should show "healthy" or "running"
 
 curl http://localhost:8000/api/health

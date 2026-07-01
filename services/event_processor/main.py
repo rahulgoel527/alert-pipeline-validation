@@ -118,8 +118,10 @@ def main():
     reaper = threading.Thread(target=reaper_loop, daemon=True)
     reaper.start()
     log(SERVICE, "Processor started, polling Redis...")
+    redis_client.set("processor:heartbeat", int(time.time()), ex=150)
     while True:
         result = redis_client.blpop(QUEUE_KEY, timeout=5)
+        redis_client.set("processor:heartbeat", int(time.time()), ex=150)
         if result is None:
             continue
         _, raw = result
