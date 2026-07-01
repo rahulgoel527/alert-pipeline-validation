@@ -7,47 +7,27 @@ No running services required — all external calls are mocked.
 """
 import hashlib
 import json
-import os
-import sys
-import time
 import pytest
 from unittest.mock import MagicMock, patch
 
+import api.main as api
+
 pytestmark = pytest.mark.unit
 
-_ENV_PATCH = {
-    "REDIS_HOST": "localhost",
-    "POSTGRES_HOST": "localhost",
-    "POSTGRES_DB": "alerts",
-    "POSTGRES_USER": "alerts",
-    "POSTGRES_PASSWORD": "secret",
-    "ELASTICSEARCH_HOST": "localhost",
-    "ES_INDEX": "security_alerts",
-}
 
-
-@pytest.fixture(autouse=True, scope="module")
-def patch_env():
-    with patch.dict(os.environ, _ENV_PATCH):
-        yield
-
-
-@pytest.fixture(scope="module")
-def api():
-    """Import the API module once, after env vars are patched."""
-    sys.modules.pop("api_main", None)
-    services_path = os.path.join(os.path.dirname(__file__), "..", "..", "services", "api")
-    if services_path not in sys.path:
-        sys.path.insert(0, services_path)
-
-    import importlib.util
-    spec = importlib.util.spec_from_file_location(
-        "api_main",
-        os.path.join(services_path, "main.py"),
-    )
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+@pytest.fixture
+def mock_api_deps():
+    """Provides (mock_conn, mock_cursor, mock_redis) for API endpoint tests."""
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+    mock_conn.__exit__ = MagicMock(return_value=False)
+    mock_cursor.__enter__ = MagicMock(return_value=mock_cursor)
+    mock_cursor.__exit__ = MagicMock(return_value=False)
+    mock_conn.cursor.return_value = mock_cursor
+    mock_redis = MagicMock()
+    mock_redis.llen.return_value = 0
+    return mock_conn, mock_cursor, mock_redis
 
 
 # ---------------------------------------------------------------------------
@@ -66,13 +46,13 @@ class TestFingerprintAlgorithm:
         return hashlib.sha256(f"{source_ip}{alert_type}{window}".encode()).hexdigest()[:16]
 
     def test_same_inputs_same_window_produce_identical_fingerprint(self):
-        now = 1_750_000_800  # arbitrary fixed epoch, divisible by 60
+        now = 1_750_000_800
         fp1 = self._compute("192.168.1.10", "brute_force", now)
         fp2 = self._compute("192.168.1.10", "brute_force", now)
         assert fp1 == fp2
 
     def test_same_inputs_different_window_produce_different_fingerprint(self):
-        base = 1_750_000_800  # second 0 of a window
+        base = 1_750_000_800
         fp_now = self._compute("192.168.1.10", "brute_force", base)
         fp_later = self._compute("192.168.1.10", "brute_force", base + 60)
         assert fp_now != fp_later
@@ -94,7 +74,7 @@ class TestFingerprintAlgorithm:
         assert len(fp) == 16
         assert all(c in "0123456789abcdef" for c in fp)
 
-    def test_generate_alerts_uses_force_fingerprint_when_provided(self, api):
+    def test_generate_alerts_uses_force_fingerprint_when_provided(self):
         """force_fingerprint bypasses computation; all generated alerts must use it."""
         forced = "deadbeef12345678"
 
@@ -121,43 +101,24 @@ class TestFingerprintAlgorithm:
 # ---------------------------------------------------------------------------
 
 class TestGenerateAlertsParameters:
-    def _call(self, api, body):
-        mock_conn = MagicMock()
-        mock_cursor = MagicMock()
-        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
-        mock_conn.__exit__ = MagicMock(return_value=False)
-        mock_cursor.__enter__ = MagicMock(return_value=mock_cursor)
-        mock_cursor.__exit__ = MagicMock(return_value=False)
-        mock_conn.cursor.return_value = mock_cursor
-
-        mock_redis = MagicMock()
-        mock_redis.llen.return_value = 0
-
+    def _call(self, body, mock_api_deps):
+        mock_conn, mock_cursor, mock_redis = mock_api_deps
         with patch.object(api, "get_pg_conn", return_value=mock_conn), \
              patch.object(api, "get_redis", return_value=mock_redis):
             return api.generate_alerts(body)
 
-    def test_count_is_capped_at_100(self, api):
-        result = self._call(api, {"count": 150})
+    def test_count_is_capped_at_100(self, mock_api_deps):
+        result = self._call({"count": 150}, mock_api_deps)
         assert result["generated"] == 100
         assert len(result["alert_ids"]) == 100
 
-    def test_count_1_produces_single_alert(self, api):
-        result = self._call(api, {"count": 1})
+    def test_count_1_produces_single_alert(self, mock_api_deps):
+        result = self._call({"count": 1}, mock_api_deps)
         assert result["generated"] == 1
         assert len(result["alert_ids"]) == 1
 
-    def test_source_prefixes_title(self, api):
-        mock_conn = MagicMock()
-        mock_cursor = MagicMock()
-        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
-        mock_conn.__exit__ = MagicMock(return_value=False)
-        mock_cursor.__enter__ = MagicMock(return_value=mock_cursor)
-        mock_cursor.__exit__ = MagicMock(return_value=False)
-        mock_conn.cursor.return_value = mock_cursor
-        mock_redis = MagicMock()
-        mock_redis.llen.return_value = 0
-
+    def test_source_in_payload_prefixes_title(self, mock_api_deps):
+        mock_conn, mock_cursor, mock_redis = mock_api_deps
         pushed_alerts = []
 
         def capture_push(key, payload):
@@ -173,17 +134,8 @@ class TestGenerateAlertsParameters:
         assert pushed_alerts[0]["title"].startswith("[GENERATOR]")
         assert pushed_alerts[0]["source"] == "generator"
 
-    def test_no_source_uses_unknown_and_no_title_prefix(self, api):
-        mock_conn = MagicMock()
-        mock_cursor = MagicMock()
-        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
-        mock_conn.__exit__ = MagicMock(return_value=False)
-        mock_cursor.__enter__ = MagicMock(return_value=mock_cursor)
-        mock_cursor.__exit__ = MagicMock(return_value=False)
-        mock_conn.cursor.return_value = mock_cursor
-        mock_redis = MagicMock()
-        mock_redis.llen.return_value = 0
-
+    def test_no_source_uses_unknown_and_no_title_prefix(self, mock_api_deps):
+        mock_conn, mock_cursor, mock_redis = mock_api_deps
         pushed_alerts = []
         mock_redis.lpush.side_effect = lambda key, p: pushed_alerts.append(json.loads(p))
 
@@ -195,27 +147,46 @@ class TestGenerateAlertsParameters:
         assert not pushed_alerts[0]["title"].startswith("[")
         assert pushed_alerts[0]["source"] == "unknown"
 
-    def test_alert_pushed_to_redis_is_valid_json_with_required_fields(self, api):
-        mock_conn = MagicMock()
-        mock_cursor = MagicMock()
-        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
-        mock_conn.__exit__ = MagicMock(return_value=False)
-        mock_cursor.__enter__ = MagicMock(return_value=mock_cursor)
-        mock_cursor.__exit__ = MagicMock(return_value=False)
-        mock_conn.cursor.return_value = mock_cursor
-        mock_redis = MagicMock()
-        mock_redis.llen.return_value = 0
-
+    def test_alert_pushed_to_redis_is_valid_json_with_required_fields(self, mock_api_deps):
+        mock_conn, mock_cursor, mock_redis = mock_api_deps
         pushed_alerts = []
         mock_redis.lpush.side_effect = lambda key, p: pushed_alerts.append(json.loads(p))
 
         with patch.object(api, "get_pg_conn", return_value=mock_conn), \
              patch.object(api, "get_redis", return_value=mock_redis):
-            api.generate_alerts({"count": 1, "source": "test"})
+            api.generate_alerts({"count": 1, "payload": {"source": "test"}})
 
         required = {"alert_id", "title", "description", "severity", "source_ip",
                     "dest_ip", "alert_type", "timestamp", "fingerprint", "source"}
         assert required.issubset(pushed_alerts[0].keys())
+
+    def test_payload_override_merges_into_alert(self, mock_api_deps):
+        mock_conn, mock_cursor, mock_redis = mock_api_deps
+        pushed_alerts = []
+        mock_redis.lpush.side_effect = lambda key, p: pushed_alerts.append(json.loads(p))
+
+        with patch.object(api, "get_pg_conn", return_value=mock_conn), \
+             patch.object(api, "get_redis", return_value=mock_redis):
+            api.generate_alerts({"count": 1, "payload": {"source_ip": "10.99.99.99", "source": "custom"}})
+
+        assert pushed_alerts
+        assert pushed_alerts[0]["source_ip"] == "10.99.99.99"
+        assert pushed_alerts[0]["source"] == "custom"
+
+    def test_payload_override_does_not_remove_required_fields(self, mock_api_deps):
+        mock_conn, mock_cursor, mock_redis = mock_api_deps
+        pushed_alerts = []
+        mock_redis.lpush.side_effect = lambda key, p: pushed_alerts.append(json.loads(p))
+
+        with patch.object(api, "get_pg_conn", return_value=mock_conn), \
+             patch.object(api, "get_redis", return_value=mock_redis):
+            api.generate_alerts({"count": 1, "payload": {"source_ip": "bad-ip"}})
+
+        assert pushed_alerts
+        required = {"alert_id", "title", "description", "severity", "source_ip",
+                    "dest_ip", "alert_type", "timestamp", "fingerprint", "source"}
+        assert required.issubset(pushed_alerts[0].keys())
+        assert pushed_alerts[0]["source_ip"] == "bad-ip"
 
 
 # ---------------------------------------------------------------------------
@@ -253,17 +224,14 @@ class TestAccountingBalanceLogic:
         assert result["unaccounted"] == 0
 
     def test_in_flight_alerts_counted_as_accounted(self):
-        # 3 produced: 1 stored, 2 still processing → should be balanced
         result = self._balance(produced=3, stored=1, failed=0, duplicates=0, processing=2)
         assert result["accounting_balanced"] is True
 
     def test_duplicate_dropped_contributes_to_accounting(self):
-        # If duplicates are NOT counted, this would show unaccounted=2
         result = self._balance(produced=5, stored=3, failed=0, duplicates=2)
         assert result["accounting_balanced"] is True
 
     def test_unaccounted_never_goes_negative(self):
-        # More stored than produced (shouldn't happen, but the formula should not blow up)
         result = self._balance(produced=3, stored=5, failed=0, duplicates=0)
         assert result["unaccounted"] == 0
         assert result["accounting_balanced"] is True
