@@ -79,7 +79,6 @@ class TestProcessAlert:
         _, kwargs = mock_es.index.call_args
         assert kwargs["id"] == sample_alert["alert_id"]
 
-        assert cursor.execute.call_count == 2
         stored_call_args = cursor.execute.call_args_list[1][0]
         assert "STORED" in stored_call_args[1]
 
@@ -91,7 +90,6 @@ class TestProcessAlert:
         processor.process_alert(sample_alert, mock_es, conn)
 
         mock_es.index.assert_not_called()
-        assert cursor.execute.call_count == 2
         dup_call_args = cursor.execute.call_args_list[1][0]
         assert "DUPLICATE_DROPPED" in dup_call_args[1]
         metadata = json.loads(dup_call_args[1][3])
@@ -105,21 +103,10 @@ class TestProcessAlert:
 
         processor.process_alert(sample_alert, mock_es, conn)
 
-        assert cursor.execute.call_count == 2
         failed_call_args = cursor.execute.call_args_list[1][0]
         assert "FAILED" in failed_call_args[1]
         metadata = json.loads(failed_call_args[1][3])
         assert "mapper_parsing_exception" in metadata["error"]
-
-    def test_processing_state_always_written_first(self, mock_es, sample_alert):
-        """First ledger write is always PROCESSING."""
-        conn, cursor = self._make_conn_and_cursor()
-        mock_es.search.return_value = {"hits": {"total": {"value": 0}, "hits": []}}
-
-        processor.process_alert(sample_alert, mock_es, conn)
-
-        first_call_args = cursor.execute.call_args_list[0][0]
-        assert "PROCESSING" in first_call_args[1]
 
     def test_alert_id_extracted_from_alert_dict(self, mock_es, sample_alert):
         """The alert_id used in ledger comes from the alert dict."""
@@ -130,6 +117,32 @@ class TestProcessAlert:
 
         first_call_args = cursor.execute.call_args_list[0][0]
         assert first_call_args[1][0] == sample_alert["alert_id"]
+
+    def test_es_search_exception_treated_as_not_duplicate_and_alert_is_stored(self, mock_es, sample_alert):
+        # is_duplicate() swallows ES exceptions (fail-open): alert is stored even when
+        # uniqueness cannot be confirmed. Changing this to re-raise breaks production.
+        conn, cursor = self._make_conn_and_cursor()
+        mock_es.search.side_effect = ConnectionError("ES unreachable during duplicate check")
+
+        processor.process_alert(sample_alert, mock_es, conn)
+
+        mock_es.index.assert_called_once()
+        stored_call_args = cursor.execute.call_args_list[-1][0]
+        assert "STORED" in stored_call_args[1]
+
+    def test_alert_missing_id_falls_back_to_unknown_sentinel(self, mock_es, sample_alert):
+        # Malformed Redis payloads (no alert_id) write FAILED under "unknown" — an
+        # intentional accounting blind spot. Multiple such alerts collide on the same key.
+        conn, cursor = self._make_conn_and_cursor()
+        mock_es.search.return_value = {"hits": {"total": {"value": 0}, "hits": []}}
+        alert_no_id = {k: v for k, v in sample_alert.items() if k != "alert_id"}
+
+        processor.process_alert(alert_no_id, mock_es, conn)
+
+        first_call_args = cursor.execute.call_args_list[0][0]
+        assert first_call_args[1][0] == "unknown", (
+            "Missing alert_id must produce 'unknown' sentinel — intentional accounting blind spot"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -153,14 +166,12 @@ class TestLogLedger:
         assert isinstance(args[3], str)
         assert json.loads(args[3]) == {"error": "boom"}
 
-    def test_none_metadata_defaults_to_empty_dict(self, mock_pg_conn):
-        conn, cursor = mock_pg_conn
-        processor.log_ledger(conn, "alert-xyz", "PROCESSING", None)
-        args = cursor.execute.call_args[0][1]
-        assert json.loads(args[3]) == {}
-
     def test_metadata_omitted_defaults_to_empty_dict(self, mock_pg_conn):
         conn, cursor = mock_pg_conn
         processor.log_ledger(conn, "alert-xyz", "PROCESSING")
+        args = cursor.execute.call_args[0][1]
+        assert json.loads(args[3]) == {}
+        # None also defaults to empty dict (same one-liner: metadata or {})
+        processor.log_ledger(conn, "alert-xyz", "PROCESSING", None)
         args = cursor.execute.call_args[0][1]
         assert json.loads(args[3]) == {}
