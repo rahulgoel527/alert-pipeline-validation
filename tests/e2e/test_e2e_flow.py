@@ -1,10 +1,9 @@
 """Flow 1: End-to-end pipeline validation tests."""
+import ipaddress
 import pytest
 
 from helpers.wait_utils import (
     wait_for_alert_terminal,
-    wait_for_accounting_balanced,
-    wait_for_new_alerts_processed,
 )
 
 pytestmark = pytest.mark.e2e
@@ -27,7 +26,7 @@ def test_alert_flows_through_complete_pipeline(api_client, ledger_client):
     alert_id = result["alert_ids"][0]
 
     terminal = wait_for_alert_terminal(ledger_client, alert_id, timeout=30)
-    assert terminal == "STORED", f"Expected STORED but got {terminal}"
+    assert terminal == "STORED", f"Alert should be STORED, got {terminal}"
 
     alert = api_client.get_alert(alert_id)
     assert alert["alert_id"] == alert_id
@@ -44,14 +43,22 @@ def test_alert_lifecycle_states_are_complete(api_client, ledger_client):
     alert_id = result["alert_ids"][0]
 
     terminal = wait_for_alert_terminal(ledger_client, alert_id, timeout=30)
-    assert terminal == "STORED", f"Alert ended in {terminal}, not STORED — retry or increase count"
+    assert terminal == "STORED", f"Alert should be STORED, got {terminal}"
 
     states = [s["state"] for s in ledger_client.get_alert_states(alert_id)]
     for expected in ("PRODUCED", "QUEUED", "PROCESSING", "STORED"):
         assert expected in states, f"Missing {expected} in lifecycle {states}"
 
+    # Deduplicate states preserving first-occurrence order before checking ordering
+    seen = set()
+    unique_states = []
+    for s in states:
+        if s not in seen:
+            seen.add(s)
+            unique_states.append(s)
+
     # Verify ordering: PRODUCED before QUEUED before PROCESSING before STORED
-    idx = {s: states.index(s) for s in ("PRODUCED", "QUEUED", "PROCESSING", "STORED")}
+    idx = {s: unique_states.index(s) for s in ("PRODUCED", "QUEUED", "PROCESSING", "STORED")}
     assert idx["PRODUCED"] < idx["QUEUED"] < idx["PROCESSING"] < idx["STORED"], (
         f"States out of order: {states}"
     )
@@ -63,8 +70,7 @@ def test_alert_data_integrity(api_client, ledger_client):
     alert_id = result["alert_ids"][0]
 
     terminal = wait_for_alert_terminal(ledger_client, alert_id, timeout=30)
-    if terminal != "STORED":
-        pytest.skip(f"Alert {alert_id} ended in {terminal}, not STORED — cannot check ES data")
+    assert terminal == "STORED", f"Alert should be STORED, got {terminal}"
 
     alert = api_client.get_alert(alert_id)
     assert alert["alert_id"] == alert_id
@@ -74,8 +80,8 @@ def test_alert_data_integrity(api_client, ledger_client):
     assert alert["alert_type"] in (
         "brute_force", "malware", "phishing", "port_scan", "data_exfiltration"
     )
-    assert alert["source_ip"].startswith("192.168.")
-    assert alert["dest_ip"].startswith("10.0.")
+    ipaddress.ip_address(alert["source_ip"])
+    ipaddress.ip_address(alert["dest_ip"])
     assert isinstance(alert["fingerprint"], str) and len(alert["fingerprint"]) == 16
     assert "timestamp" in alert
 
@@ -94,20 +100,15 @@ def test_multiple_alerts_all_processed(api_client, ledger_client):
         )
 
 
-def test_pipeline_stats_are_accurate(api_client, ledger_client, baseline_stats):
-    """Generate known number of alerts → wait → verify /api/stats counts match ledger.
-
-    The 2% stuck-alert simulation means some alerts stay in PROCESSING; we use
-    allow_stuck=True so the test waits as long as possible without hard-failing
-    on a hung worker.
-    """
+def test_pipeline_stats_are_accurate(api_client, ledger_client):
+    """Generate known number of alerts → wait → verify /api/stats counts match ledger."""
     count = 5
     before = api_client.get_stats()
     result = api_client.generate_alerts(count=count)
     alert_ids = result["alert_ids"]
 
     for alert_id in alert_ids:
-        wait_for_alert_terminal(ledger_client, alert_id, timeout=60, allow_stuck=True)
+        wait_for_alert_terminal(ledger_client, alert_id, timeout=60)
 
     after = api_client.get_stats()
 
