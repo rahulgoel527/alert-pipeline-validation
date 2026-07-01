@@ -1,7 +1,7 @@
 # Test Strategy: Alert Processing Pipeline
 
 ## Scope
-End-to-end validation of alert ingestion, processing, storage, and investigation across the full 8-service pipeline.
+End-to-end validation of alert ingestion, processing, storage, and investigation across the full pipeline (4 Python services + Redis, Postgres, Elasticsearch).
 
 ## System Under Test
 - Alert Generator → Redis Queue → Processor → Elasticsearch (final store)
@@ -36,7 +36,7 @@ End-to-end validation of alert ingestion, processing, storage, and investigation
 - **Test isolation:** Per-test baseline snapshots; tests generate own data, assert on deltas
 
 ## Entry Criteria
-- All 8 Docker services healthy (`docker compose ps`)
+- All Docker services healthy (`docker compose -p alertlab ps`)
 - `GET /api/health` returns `{"status": "ok"}`
 - Pipeline processes at least 1 alert end-to-end before suite runs
 

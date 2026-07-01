@@ -1,3 +1,5 @@
+name: alertlab
+
 services:
 
   redis:
@@ -145,7 +147,6 @@ services:
     build:
       context: .
       dockerfile: dashboard/Dockerfile
-    profiles: [pipeline]
     env_file: .env
     environment:
       REDIS_HOST: redis
@@ -164,7 +165,7 @@ services:
     depends_on:
       postgres: {condition: service_healthy}
       elasticsearch: {condition: service_healthy}
-      api: {condition: service_healthy}
+      redis: {condition: service_healthy}
 
   dejavu:
     image: appbaseio/dejavu

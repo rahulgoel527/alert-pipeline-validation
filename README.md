@@ -12,19 +12,21 @@ A security alert processing pipeline with 4 Python services, backed by Redis, Po
 # 1. Register shared git hooks (one-time per clone)
 git config core.hooksPath .githooks
 
-# 2. Start the lab
-docker compose -f services/docker-compose.yml --profile pipeline up --build -d
-docker compose -f services/docker-compose.yml ps
-
-# 3. Wait ~30s, then validate the pipeline
-python services/validate_service.py
-
-# 4. Run the test suite
-python3 -m venv .venv
+# 2. Set up local Python 3.12 venv (one-time per clone)
+./setup_venv.sh
 source .venv/bin/activate
 
-pip install -r tests/requirements.txt
-pytest tests/ -v
+# 3. Start infra + dashboard, then pipeline services
+cd services/
+docker compose -p alertlab up -d
+docker compose -p alertlab --profile pipeline up --build -d
+docker compose -p alertlab ps
+
+# 4. Wait ~30s, then validate the pipeline
+python services/validate_service.py
+
+# 5. Run the test suite
+cd tests && pytest -m unit
 ```
 
 > The git hook prints a `/update-docs` reminder after any commit that touches `services/` or `tests/`.
@@ -89,12 +91,12 @@ sha256(source_ip + alert_type + floor(unix_time / 60))[:16]
 | api | 8000 | Alert factory, REST endpoints, schema owner |
 | processor | — | Deduplicates alerts, writes to ES |
 | generator | — | Calls `POST /api/generate` every 10s, 10% duplicate rate |
+
+**Infrastructure (always-on):**
+
+| Service | Port | Role |
+|---------|------|------|
 | dashboard | 8050 | Live pipeline stats, auto-refresh every 5s |
-
-**Infrastructure dependencies (off-the-shelf):**
-
-| Dependency | Port | Role |
-|------------|------|------|
 | redis | 6379 | Alert queue (`alert_queue` list) |
 | postgres | 5432 | State ledger — every lifecycle transition |
 | elasticsearch | 9200 | Final alert store (searchable, keyword-indexed) |
@@ -106,13 +108,14 @@ sha256(source_ip + alert_type + floor(unix_time / 60))[:16]
 
 ```mermaid
 flowchart TD
-    subgraph unit["Unit Tests (44) — no services needed"]
+    subgraph unit["Unit Tests (55) — no services needed"]
         U1["Fingerprint 60s window contract"]
         U2["generate_alerts() count cap + source prefix"]
         U3["is_duplicate() hit / miss / NotFoundError"]
         U4["process_alert() dedup + STORED / FAILED paths"]
         U5["log_ledger() metadata serialisation"]
         U6["Reaper SQL contract + FAILED entry shape"]
+        U7["/dashboard/health — all infra + processor states"]
     end
 
     subgraph e2e["E2E Tests (19) — requires running lab"]

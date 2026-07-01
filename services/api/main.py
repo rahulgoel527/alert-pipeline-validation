@@ -10,6 +10,7 @@ from fastapi import Body, FastAPI, HTTPException, Query
 from common import (
     QUEUE_KEY, get_pg_conn, get_es, get_redis, log,
     wait_for_postgres, wait_for_elasticsearch,
+    ES_MAPPINGS, reset_pipeline,
 )
 from common.stats import get_pipeline_stats
 from common.alert_factory import (
@@ -18,22 +19,6 @@ from common.alert_factory import (
 
 SERVICE = "api"
 ES_INDEX = os.environ["ES_INDEX"]
-
-ES_MAPPINGS = {
-    "properties": {
-        "alert_id":    {"type": "keyword"},
-        "title":       {"type": "text"},
-        "description": {"type": "text"},
-        "severity":    {"type": "keyword"},
-        "source_ip":   {"type": "ip"},
-        "dest_ip":     {"type": "ip"},
-        "alert_type":  {"type": "keyword"},
-        "timestamp":   {"type": "date"},
-        "fingerprint": {"type": "keyword"},
-        "source":      {"type": "keyword"},
-        "metadata":    {"type": "object", "enabled": False},
-    }
-}
 
 
 def init_postgres_schema():
@@ -53,36 +38,27 @@ def init_postgres_schema():
                 """)
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_alert_id ON alert_ledger(alert_id)")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_state ON alert_ledger(state)")
-                cur.execute("TRUNCATE TABLE alert_ledger RESTART IDENTITY")
-        log(SERVICE, "Postgres schema ready — ledger cleared")
+        log(SERVICE, "Postgres schema ready")
     finally:
         conn.close()
 
 
 def init_es_index(es):
-    try:
-        if es.indices.exists(index=ES_INDEX):
-            es.indices.delete(index=ES_INDEX)
-            log(SERVICE, f"ES index '{ES_INDEX}' dropped")
-        es.indices.create(index=ES_INDEX, mappings=ES_MAPPINGS)
-        log(SERVICE, f"ES index '{ES_INDEX}' created fresh")
-    except Exception as exc:
-        log(SERVICE, f"FATAL: failed to initialise ES index '{ES_INDEX}': {exc}")
-        raise
+    if not es.indices.exists(index=ES_INDEX):
+        try:
+            es.indices.create(index=ES_INDEX, mappings=ES_MAPPINGS)
+            log(SERVICE, f"ES index '{ES_INDEX}' created")
+        except Exception as exc:
+            log(SERVICE, f"FATAL: failed to create ES index '{ES_INDEX}': {exc}")
+            raise
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     wait_for_postgres(SERVICE)
     init_postgres_schema()
-
     es = wait_for_elasticsearch(SERVICE)
     init_es_index(es)
-
-    r = get_redis()
-    r.delete(QUEUE_KEY)
-    log(SERVICE, f"Redis queue '{QUEUE_KEY}' flushed")
-
     yield
 
 
@@ -209,6 +185,15 @@ def get_ledger(alert_id: str):
         }
         for r in rows
     ]
+
+
+@app.post("/api/reset")
+def api_reset():
+    try:
+        reset_pipeline(SERVICE)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    return {"reset": True}
 
 
 @app.post("/api/generate")

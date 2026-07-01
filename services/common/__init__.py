@@ -9,3 +9,5 @@ from common.infra import (
     wait_for_elasticsearch,
     wait_for_redis,
 )
+from common.es_mappings import ES_MAPPINGS
+from common.reset import reset_pipeline

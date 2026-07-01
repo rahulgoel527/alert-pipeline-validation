@@ -1,121 +1,649 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Alert Pipeline Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <style>
+    /* ── TOKENS ── */
+    :root, [data-theme="light"] {
+      --bg:       #f6f8fa;
+      --surface:  #ffffff;
+      --surface2: #eaeef2;
+      --border:   #d0d7de;
+      --text:     #1f2328;
+      --text2:    #656d76;
+      --text3:    #9198a1;
+      --blue:     #0969da;
+      --amber:    #9a6700;
+      --purple:   #8250df;
+      --green:    #1a7f37;
+      --red:      #cf222e;
+      --muted:    #656d76;
+      --header-bg: #ffffff;
+      --shadow:   0 1px 3px rgba(31,35,40,0.12), 0 0 0 1px rgba(31,35,40,0.08);
+    }
+
+    [data-theme="dark"] {
+      --bg:       #0d1117;
+      --surface:  #161b22;
+      --surface2: #21262d;
+      --border:   #30363d;
+      --text:     #e6edf3;
+      --text2:    #7d8590;
+      --text3:    #484f58;
+      --blue:     #2f81f7;
+      --amber:    #e3b341;
+      --purple:   #bc8cff;
+      --green:    #3fb950;
+      --red:      #f85149;
+      --muted:    #6e7681;
+      --header-bg: #161b22;
+      --shadow:   0 1px 3px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.04);
+    }
+
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #0f1117; color: #e2e8f0; padding: 24px; }
-    h1 { font-size: 1.5rem; font-weight: 600; margin-bottom: 4px; }
-    .subtitle { color: #94a3b8; font-size: 0.875rem; margin-bottom: 24px; }
-    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 24px; }
-    .card { background: #1e2433; border-radius: 8px; padding: 16px; text-align: center; }
-    .card .value { font-size: 2rem; font-weight: 700; line-height: 1; margin-bottom: 4px; }
-    .card .label { font-size: 0.75rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; }
-    .card.produced .value { color: #60a5fa; }
-    .card.queued .value { color: #fbbf24; }
-    .card.processing .value { color: #a78bfa; }
-    .card.stored .value { color: #34d399; }
-    .card.failed .value { color: #f87171; }
-    .card.duplicates .value { color: #94a3b8; }
-    .status-bar { display: flex; align-items: center; gap: 16px; margin-bottom: 24px; font-size: 0.875rem; }
-    .badge { padding: 4px 10px; border-radius: 9999px; font-size: 0.75rem; font-weight: 600; }
-    .badge.ok { background: #064e3b; color: #34d399; }
-    .badge.warn { background: #7c2d12; color: #fb923c; }
-    .meta { color: #94a3b8; }
-    .section-title { font-size: 0.875rem; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 10px; }
-    .alert-table { width: 100%; border-collapse: collapse; font-size: 0.8125rem; }
-    .alert-table th { text-align: left; color: #64748b; font-weight: 500; padding: 6px 10px; border-bottom: 1px solid #1e2433; }
-    .alert-table td { padding: 7px 10px; border-bottom: 1px solid #1a2030; vertical-align: middle; }
-    .alert-table tr:last-child td { border-bottom: none; }
-    .sev { padding: 2px 8px; border-radius: 4px; font-size: 0.7rem; font-weight: 600; text-transform: uppercase; }
-    .sev.critical { background: #450a0a; color: #fca5a5; }
-    .sev.high { background: #431407; color: #fb923c; }
-    .sev.medium { background: #422006; color: #fbbf24; }
-    .sev.low { background: #052e16; color: #86efac; }
-    .stuck-banner { background: #7c2d12; border-radius: 8px; padding: 12px 16px; margin-bottom: 24px; }
-    .stuck-banner h3 { color: #fca5a5; font-size: 0.875rem; margin-bottom: 6px; }
-    .stuck-banner ul { padding-left: 20px; font-size: 0.8125rem; color: #fdba74; }
-    .no-data { color: #475569; font-size: 0.875rem; padding: 16px 0; }
-    .refresh-note { color: #334155; font-size: 0.75rem; margin-top: 24px; }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 14px;
+      line-height: 1.5;
+      transition: background 0.2s, color 0.2s;
+    }
+
+    /* ── HEADER ── */
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 56px;
+      padding: 0 24px;
+      background: var(--header-bg);
+      border-bottom: 1px solid var(--border);
+      overflow: hidden;
+    }
+
+    header::after {
+      content: '';
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      width: 200%;
+      height: 2px;
+      background: linear-gradient(90deg, var(--blue), var(--green), var(--blue));
+      background-size: 50% 100%;
+      animation: flow 4s linear infinite;
+    }
+
+    header[data-health="warn"]::after {
+      background: linear-gradient(90deg, var(--amber), var(--red), var(--amber));
+      background-size: 50% 100%;
+      animation: pulse 1.5s ease-in-out infinite;
+    }
+
+    @keyframes flow  { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+
+    .header-title {
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+      color: var(--text);
+    }
+
+    .header-actions { display: flex; gap: 8px; align-items: center; }
+
+    /* ── BUTTONS ── */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 14px;
+      border-radius: 6px;
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 500;
+      text-decoration: none;
+      cursor: pointer;
+      white-space: nowrap;
+      border: 1px solid transparent;
+      transition: filter 0.12s, opacity 0.12s;
+      line-height: 1;
+    }
+
+    .btn:hover { filter: brightness(0.93); }
+    .btn:active { filter: brightness(0.87); }
+
+    .btn-primary {
+      background: var(--blue);
+      color: #ffffff;
+      border-color: var(--blue);
+    }
+
+    .btn-danger {
+      background: var(--red);
+      color: #ffffff;
+      border-color: var(--red);
+    }
+
+    .btn-ghost {
+      background: var(--surface2);
+      color: var(--text2);
+      border-color: var(--border);
+    }
+
+    .btn-ghost:hover { color: var(--text); filter: none; background: var(--border); }
+
+    /* theme toggle */
+    .theme-toggle {
+      width: 32px;
+      height: 32px;
+      padding: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      cursor: pointer;
+      color: var(--text2);
+      font-size: 16px;
+      transition: background 0.15s;
+    }
+
+    .theme-toggle:hover { background: var(--border); color: var(--text); }
+
+    /* ── LAYOUT ── */
+    main { padding: 0 24px 48px; }
+
+    /* ── STATUS BAR ── */
+    .status-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 0;
+      margin-bottom: 16px;
+      font-size: 12px;
+      color: var(--text2);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .status-left { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
+
+    .status-indicator { display: flex; align-items: center; gap: 6px; font-weight: 500; }
+
+    .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .dot-green { background: var(--green); }
+    .dot-amber { background: var(--amber); }
+
+    /* ── METRIC CARDS ── */
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+
+    @media (max-width: 900px) {
+      .cards { grid-template-columns: repeat(3, 1fr); }
+    }
+
+    @media (max-width: 540px) {
+      .cards { grid-template-columns: repeat(2, 1fr); }
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px 16px 14px 18px;
+      border-left: 3px solid transparent;
+      transition: box-shadow 0.15s;
+    }
+
+    .card:hover { box-shadow: var(--shadow); }
+
+    .card.produced   { border-left-color: var(--blue); }
+    .card.queued     { border-left-color: var(--amber); }
+    .card.processing { border-left-color: var(--purple); }
+    .card.stored     { border-left-color: var(--green); }
+    .card.failed     { border-left-color: var(--red); }
+    .card.duplicates { border-left-color: var(--muted); }
+
+    .card .value {
+      font-size: 2rem;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      line-height: 1.1;
+      color: var(--text);
+      margin-bottom: 4px;
+    }
+
+    .card .label {
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--text2);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    /* ── STUCK BANNER ── */
+    .stuck-banner {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--amber);
+      border-radius: 6px;
+      padding: 10px 14px;
+      margin-bottom: 16px;
+      background: var(--surface);
+    }
+
+    .stuck-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--amber);
+      white-space: nowrap;
+      margin-top: 1px;
+    }
+
+    .stuck-banner ul { list-style: none; display: flex; flex-wrap: wrap; gap: 8px; }
+
+    .stuck-banner li {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      color: var(--text2);
+    }
+
+    /* ── TABLE ── */
+    .section-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 8px;
+    }
+
+    .section-title {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text3);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      white-space: nowrap;
+    }
+
+    .section-rule { flex: 1; height: 1px; background: var(--border); }
+
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface);
+    }
+
+    .alert-table { width: 100%; border-collapse: collapse; }
+
+    .alert-table th {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text3);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      padding: 9px 14px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface2);
+      white-space: nowrap;
+    }
+
+    .alert-table th:first-child { border-radius: 8px 0 0 0; }
+    .alert-table th:last-child  { border-radius: 0 8px 0 0; }
+
+    .alert-table td {
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: middle;
+      font-size: 13px;
+    }
+
+    .alert-table tbody tr:last-child td { border-bottom: none; }
+    .alert-table tbody tr:hover td { background: var(--surface2); }
+
+    .mono { font-family: 'JetBrains Mono', monospace; font-size: 12px; }
+    .ts   { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text2); }
+    .title-cell { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    /* severity */
+    .sev {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 12px;
+      font-weight: 500;
+    }
+
+    .sev::before {
+      content: '';
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .sev.critical { color: var(--red); }
+    .sev.critical::before { background: var(--red); }
+    .sev.high     { color: var(--amber); }
+    .sev.high::before { background: var(--amber); }
+    .sev.medium   { color: var(--purple); }
+    .sev.medium::before { background: var(--purple); }
+    .sev.low      { color: var(--text2); }
+    .sev.low::before { background: var(--text2); }
+
+    /* state badges */
+    .state {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+    }
+
+    [data-theme="light"] .state.stored     { background: #dafbe1; color: #1a7f37; }
+    [data-theme="light"] .state.processing { background: #fbefff; color: #8250df; }
+    [data-theme="light"] .state.failed     { background: #ffebe9; color: #cf222e; }
+    [data-theme="light"] .state.queued     { background: #fff8c5; color: #9a6700; }
+
+    [data-theme="dark"] .state.stored     { background: rgba(63,185,80,0.15);  color: #3fb950; }
+    [data-theme="dark"] .state.processing { background: rgba(188,140,255,0.15); color: #bc8cff; }
+    [data-theme="dark"] .state.failed     { background: rgba(248,81,73,0.15);  color: #f85149; }
+    [data-theme="dark"] .state.queued     { background: rgba(227,179,65,0.15); color: #e3b341; }
+
+    .no-data { color: var(--text3); font-size: 13px; padding: 32px 14px; }
+
+    /* ── MODAL ── */
+    #reset-modal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.5);
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .modal-box {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 24px;
+      max-width: 420px;
+      width: 90%;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.18);
+    }
+
+    .modal-title {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 8px;
+    }
+
+    .modal-body  { font-size: 13px; color: var(--text2); margin-bottom: 16px; line-height: 1.6; }
+    .modal-label { font-size: 13px; color: var(--text); margin-bottom: 8px; }
+
+    .modal-input {
+      width: 100%;
+      padding: 8px 10px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13px;
+      margin-bottom: 16px;
+      outline: none;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+
+    .modal-input:focus {
+      border-color: var(--blue);
+      box-shadow: 0 0 0 3px rgba(9,105,218,0.12);
+    }
+
+    .modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+    .modal-error   { display: none; font-size: 12px; color: var(--red); margin-top: 10px; }
+
+    @media (prefers-reduced-motion: reduce) { header::after { animation: none; } }
+
+    /* ── HEALTH ROW ── */
+    .health-row {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      flex-wrap: wrap;
+      padding: 8px 0;
+      margin-bottom: 16px;
+      border-bottom: 1px solid var(--border);
+      font-size: 12px;
+      color: var(--text2);
+    }
+
+    .health-badge {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-weight: 500;
+    }
+
+    .health-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      transition: background 0.3s;
+    }
+
+    .health-dot.green  { background: var(--green); }
+    .health-dot.red    { background: var(--red); }
+    .health-dot.amber  { background: var(--amber); }
+    .health-dot.grey   { background: var(--text3); }
+
+    .health-label-name  { color: var(--text3); text-transform: uppercase; letter-spacing: 0.06em; font-size: 11px; }
+    .health-label-state { color: var(--text2); margin-left: 2px; }
   </style>
 </head>
 <body>
-  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px">
-    <h1>Alert Pipeline Dashboard</h1>
-    <a href="http://localhost:1358/?appname=security_alerts&url=http://localhost:9200" target="_blank"
-       style="padding:6px 14px;background:#1e2433;border:1px solid #334155;border-radius:6px;color:#60a5fa;font-size:0.8125rem;text-decoration:none;white-space:nowrap">
-      Browse in Dejavu →
-    </a>
-  </div>
-  <p class="subtitle" id="last-refresh">Loading...</p>
 
-  <div class="cards" id="cards">
-    <div class="card produced"><div class="value" id="c-produced">{{ stats.total_produced }}</div><div class="label">Produced</div></div>
-    <div class="card queued"><div class="value" id="c-queued">{{ stats.currently_queued }}</div><div class="label">Queued</div></div>
-    <div class="card processing"><div class="value" id="c-processing">{{ stats.currently_processing }}</div><div class="label">Processing</div></div>
-    <div class="card stored"><div class="value" id="c-stored">{{ stats.total_stored }}</div><div class="label">Stored</div></div>
-    <div class="card failed"><div class="value" id="c-failed">{{ stats.total_failed }}</div><div class="label">Failed</div></div>
-    <div class="card duplicates"><div class="value" id="c-duplicates">{{ stats.total_duplicates }}</div><div class="label">Duplicates</div></div>
-  </div>
-
-  <div class="status-bar">
-    <span id="accounting-badge" class="badge {% if stats.accounting_balanced %}ok{% else %}warn{% endif %}">
-      {% if stats.accounting_balanced %}Accounting Balanced{% else %}Accounting Off ({{ stats.unaccounted }} unaccounted){% endif %}
-    </span>
-    <span class="meta" id="latency-info">Avg latency: {{ stats.avg_processing_latency_ms }} ms</span>
-    <span class="meta" id="last-event">Last event: {{ stats.last_event_at or "none" }}</span>
-  </div>
-
-  <div id="stuck-container">
-    {% if stuck_alerts %}
-    <div class="stuck-banner">
-      <h3>&#9888; Stuck Alerts (processing > 60s)</h3>
-      <ul>{% for a in stuck_alerts %}<li>{{ a.alert_id }} since {{ a.since }}</li>{% endfor %}</ul>
+  <header id="page-header" data-health="ok">
+    <span class="header-title">Alert Pipeline</span>
+    <div class="header-actions">
+      <button class="theme-toggle" id="theme-btn" onclick="toggleTheme()" title="Toggle theme">☀</button>
+      <a href="http://localhost:1358/?appname=security_alerts&url=http://localhost:9200"
+         target="_blank" class="btn btn-primary">Browse in Dejavu →</a>
+      <button onclick="openResetModal()" class="btn btn-danger">Reset Pipeline</button>
     </div>
-    {% endif %}
+  </header>
+
+  <!-- Reset modal -->
+  <div id="reset-modal">
+    <div class="modal-box">
+      <p class="modal-title">Reset Pipeline</p>
+      <p class="modal-body">This permanently wipes all data — Postgres ledger, Elasticsearch index, and Redis queue. There is no undo.</p>
+      <p class="modal-label">Type <strong>wipedata</strong> to confirm:</p>
+      <input id="reset-confirm-input" class="modal-input" type="text" placeholder="wipedata" autocomplete="off"
+             oninput="const b=document.getElementById('reset-confirm-btn');b.disabled=this.value!=='wipedata';b.style.opacity=this.value==='wipedata'?'1':'0.4'"/>
+      <div class="modal-actions">
+        <button onclick="closeResetModal()" class="btn btn-ghost">Cancel</button>
+        <button id="reset-confirm-btn" onclick="doReset()" disabled
+                class="btn btn-danger" style="opacity:0.4">Confirm Reset</button>
+      </div>
+      <p id="reset-error" class="modal-error"></p>
+    </div>
   </div>
 
-  <p class="section-title">Recent Alerts</p>
-  <table class="alert-table" id="alert-table">
-    <thead>
-      <tr>
-        <th>Alert ID</th>
-        <th>Title</th>
-        <th>Type</th>
-        <th>Severity</th>
-        <th>Source IP</th>
-        <th>Dest IP</th>
-        <th>Timestamp</th>
-        <th>State</th>
-      </tr>
-    </thead>
-    <tbody id="alert-tbody">
-      {% if recent_alerts %}
-        {% for a in recent_alerts %}
-        <tr>
-          <td style="font-family:monospace;font-size:0.75rem">{{ a.alert_id[:8] }}&#8230;</td>
-          <td style="font-size:0.75rem;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ a.title }}</td>
-          <td>{{ a.alert_type }}</td>
-          <td><span class="sev {{ a.severity }}">{{ a.severity }}</span></td>
-          <td style="font-family:monospace">{{ a.source_ip }}</td>
-          <td style="font-family:monospace">{{ a.dest_ip }}</td>
-          <td style="font-size:0.75rem;color:#64748b">{{ a.timestamp[:19] }}</td>
-          <td><span style="color:#34d399;font-size:0.75rem">STORED</span></td>
-        </tr>
-        {% endfor %}
-      {% else %}
-        <tr><td colspan="8" class="no-data">No alerts yet — waiting for pipeline...</td></tr>
-      {% endif %}
-    </tbody>
-  </table>
+  <main>
+    <!-- Status bar -->
+    <div class="status-bar">
+      <div class="status-left">
+        <span class="status-indicator">
+          <span class="dot {% if stats.accounting_balanced %}dot-green{% else %}dot-amber{% endif %}" id="acct-dot"></span>
+          <span id="acct-label">{% if stats.accounting_balanced %}Accounting balanced{% else %}Accounting off — {{ stats.unaccounted }} unaccounted{% endif %}</span>
+        </span>
+        <span id="latency-info">{{ stats.avg_processing_latency_ms }} ms avg</span>
+        <span id="last-event">Last event: {{ stats.last_event_at or "none" }}</span>
+      </div>
+      <span id="last-refresh" style="color:var(--text3)">Loading…</span>
+    </div>
 
-  <p class="refresh-note">Auto-refreshes every 5 seconds</p>
+    <!-- Health row -->
+    <div class="health-row" id="health-row">
+      <span class="health-badge">
+        <span class="health-dot grey" id="h-dot-api"></span>
+        <span class="health-label-name">API</span>
+        <span class="health-label-state" id="h-state-api">—</span>
+      </span>
+      <span class="health-badge">
+        <span class="health-dot grey" id="h-dot-processor"></span>
+        <span class="health-label-name">Processor</span>
+        <span class="health-label-state" id="h-state-processor">—</span>
+      </span>
+      <span class="health-badge">
+        <span class="health-dot grey" id="h-dot-redis"></span>
+        <span class="health-label-name">Redis</span>
+        <span class="health-label-state" id="h-state-redis">—</span>
+      </span>
+      <span class="health-badge">
+        <span class="health-dot grey" id="h-dot-postgres"></span>
+        <span class="health-label-name">Postgres</span>
+        <span class="health-label-state" id="h-state-postgres">—</span>
+      </span>
+      <span class="health-badge">
+        <span class="health-dot grey" id="h-dot-es"></span>
+        <span class="health-label-name">Elasticsearch</span>
+        <span class="health-label-state" id="h-state-es">—</span>
+      </span>
+    </div>
+
+    <!-- Metric cards -->
+    <div class="cards">
+      <div class="card produced">
+        <div class="value" id="c-produced">{{ stats.total_produced }}</div>
+        <div class="label">Produced</div>
+      </div>
+      <div class="card queued">
+        <div class="value" id="c-queued">{{ stats.currently_queued }}</div>
+        <div class="label">Queued</div>
+      </div>
+      <div class="card processing">
+        <div class="value" id="c-processing">{{ stats.currently_processing }}</div>
+        <div class="label">Processing</div>
+      </div>
+      <div class="card stored">
+        <div class="value" id="c-stored">{{ stats.total_stored }}</div>
+        <div class="label">Stored</div>
+      </div>
+      <div class="card failed">
+        <div class="value" id="c-failed">{{ stats.total_failed }}</div>
+        <div class="label">Failed</div>
+      </div>
+      <div class="card duplicates">
+        <div class="value" id="c-duplicates">{{ stats.total_duplicates }}</div>
+        <div class="label">Duplicates</div>
+      </div>
+    </div>
+
+    <!-- Stuck alerts -->
+    <div id="stuck-container">
+      {% if stuck_alerts %}
+      <div class="stuck-banner">
+        <span class="stuck-label">Stuck &gt;60s</span>
+        <ul>{% for a in stuck_alerts %}<li>{{ a.alert_id }} — since {{ a.since }}</li>{% endfor %}</ul>
+      </div>
+      {% endif %}
+    </div>
+
+    <!-- Recent alerts table -->
+    <div class="section-header">
+      <span class="section-title">Recent Alerts</span>
+      <span class="section-rule"></span>
+    </div>
+
+    <div class="table-wrap">
+      <table class="alert-table">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Title</th>
+            <th>Type</th>
+            <th>Severity</th>
+            <th>Source IP</th>
+            <th>Dest IP</th>
+            <th>Timestamp</th>
+            <th>State</th>
+          </tr>
+        </thead>
+        <tbody id="alert-tbody">
+          {% if recent_alerts %}
+            {% for a in recent_alerts %}
+            <tr>
+              <td class="mono">{{ a.alert_id[:8] }}…</td>
+              <td class="title-cell">{{ a.title }}</td>
+              <td>{{ a.alert_type }}</td>
+              <td><span class="sev {{ a.severity }}">{{ a.severity }}</span></td>
+              <td class="mono">{{ a.source_ip }}</td>
+              <td class="mono">{{ a.dest_ip }}</td>
+              <td class="ts">{{ a.timestamp[:19] }}</td>
+              <td><span class="state stored">STORED</span></td>
+            </tr>
+            {% endfor %}
+          {% else %}
+            <tr><td colspan="8" class="no-data">No alerts yet — waiting for pipeline…</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </main>
 
   <script>
+    // ── THEME ──
+    (function() {
+      const saved = localStorage.getItem('apd-theme');
+      if (saved) {
+        document.documentElement.dataset.theme = saved;
+        document.getElementById('theme-btn').textContent = saved === 'dark' ? '☀' : '🌙';
+      }
+    })();
+
+    function toggleTheme() {
+      const html = document.documentElement;
+      const next = html.dataset.theme === 'dark' ? 'light' : 'dark';
+      html.dataset.theme = next;
+      document.getElementById('theme-btn').textContent = next === 'dark' ? '☀' : '🌙';
+      localStorage.setItem('apd-theme', next);
+    }
+
+    // ── DASHBOARD ──
     function updateTimestamp() {
-      document.getElementById('last-refresh').textContent = 'Last refreshed: ' + new Date().toLocaleTimeString();
+      document.getElementById('last-refresh').textContent = 'Refreshed ' + new Date().toLocaleTimeString();
     }
     updateTimestamp();
 
@@ -123,61 +651,170 @@
       return ['critical','high','medium','low'].includes(s) ? s : 'low';
     }
 
+    function dotClass(status) {
+      if (status === 'healthy')     return 'green';
+      if (status === 'stalled')     return 'amber';
+      if (status === 'unreachable') return 'red';
+      if (status === 'down')        return 'red';
+      if (status === 'not_started') return 'red';
+      return 'grey';
+    }
+
+    function updateHealthBadge(dotId, stateId, status) {
+      const dot   = document.getElementById(dotId);
+      const state = document.getElementById(stateId);
+      if (!dot || !state) return;
+      dot.className   = 'health-dot ' + dotClass(status);
+      state.textContent = status || 'unknown';
+    }
+
+    let serviceHealthOk = true;
+
+    function updateHealthRow(health) {
+      updateHealthBadge('h-dot-api',       'h-state-api',       health.api?.status);
+      updateHealthBadge('h-dot-processor', 'h-state-processor', health.processor?.status);
+      updateHealthBadge('h-dot-redis',     'h-state-redis',     health.redis?.status);
+      updateHealthBadge('h-dot-postgres',  'h-state-postgres',  health.postgres?.status);
+      updateHealthBadge('h-dot-es',        'h-state-es',        health.elasticsearch?.status);
+      serviceHealthOk = !['api','processor','redis','postgres','elasticsearch']
+        .some(k => health[k] && health[k].status !== 'healthy');
+    }
+
+    function updateHealthStrip(stats, stuckCount) {
+      const header = document.getElementById('page-header');
+      header.dataset.health = (stuckCount > 0 || stats.total_failed > 0 || !stats.accounting_balanced || !serviceHealthOk)
+        ? 'warn' : 'ok';
+    }
+
+    function clearUI() {
+      ['c-produced','c-queued','c-processing','c-stored','c-failed','c-duplicates']
+        .forEach(id => document.getElementById(id).textContent = '0');
+      document.getElementById('acct-dot').className     = 'dot dot-green';
+      document.getElementById('acct-label').textContent = 'Accounting balanced';
+      document.getElementById('latency-info').textContent = '— ms avg';
+      document.getElementById('last-event').textContent   = 'Last event: none';
+      document.getElementById('alert-tbody').innerHTML =
+        '<tr><td colspan="8" class="no-data">No alerts yet — waiting for pipeline…</td></tr>';
+      document.getElementById('stuck-container').innerHTML = '';
+      document.getElementById('page-header').dataset.health = 'ok';
+    }
+
     async function refresh() {
+      // Health check — runs concurrently, never blocks stats/alerts
+      fetch('/dashboard/health')
+        .then(r => r.json())
+        .then(health => { updateHealthRow(health); })
+        .catch(() => {/* health endpoint unreachable — badges stay grey */});
+
+      // Stats + stuck — dashboard-internal, should always work
       try {
-        const statsRes = await fetch('/api/stats');
+        const statsRes = await fetch('/dashboard/stats');
         const stats = await statsRes.json();
 
-        document.getElementById('c-produced').textContent = stats.total_produced;
-        document.getElementById('c-queued').textContent = stats.currently_queued;
+        document.getElementById('c-produced').textContent   = stats.total_produced;
+        document.getElementById('c-queued').textContent     = stats.currently_queued;
         document.getElementById('c-processing').textContent = stats.currently_processing;
-        document.getElementById('c-stored').textContent = stats.total_stored;
-        document.getElementById('c-failed').textContent = stats.total_failed;
+        document.getElementById('c-stored').textContent     = stats.total_stored;
+        document.getElementById('c-failed').textContent     = stats.total_failed;
         document.getElementById('c-duplicates').textContent = stats.total_duplicates;
 
-        const badge = document.getElementById('accounting-badge');
+        const dot   = document.getElementById('acct-dot');
+        const label = document.getElementById('acct-label');
         if (stats.accounting_balanced) {
-          badge.className = 'badge ok';
-          badge.textContent = 'Accounting Balanced';
+          dot.className     = 'dot dot-green';
+          label.textContent = 'Accounting balanced';
         } else {
-          badge.className = 'badge warn';
-          badge.textContent = 'Accounting Off (' + stats.unaccounted + ' unaccounted)';
-        }
-        document.getElementById('latency-info').textContent = 'Avg latency: ' + stats.avg_processing_latency_ms + ' ms';
-        document.getElementById('last-event').textContent = 'Last event: ' + (stats.last_event_at || 'none');
-
-        const alertsRes = await fetch('http://localhost:8000/api/alerts?size=20');
-        const alerts = await alertsRes.json();
-        const tbody = document.getElementById('alert-tbody');
-        if (alerts.length === 0) {
-          tbody.innerHTML = '<tr><td colspan="8" class="no-data">No alerts yet — waiting for pipeline...</td></tr>';
-        } else {
-          tbody.innerHTML = alerts.map(a => `
-            <tr>
-              <td style="font-family:monospace;font-size:0.75rem">${a.alert_id.slice(0,8)}…</td>
-              <td style="font-size:0.75rem;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${a.title || ''}</td>
-              <td>${a.alert_type}</td>
-              <td><span class="sev ${sevClass(a.severity)}">${a.severity}</span></td>
-              <td style="font-family:monospace">${a.source_ip}</td>
-              <td style="font-family:monospace">${a.dest_ip}</td>
-              <td style="font-size:0.75rem;color:#64748b">${(a.timestamp||'').slice(0,19)}</td>
-              <td><span style="color:#34d399;font-size:0.75rem">STORED</span></td>
-            </tr>`).join('');
+          dot.className     = 'dot dot-amber';
+          label.textContent = 'Accounting off — ' + stats.unaccounted + ' unaccounted';
         }
 
-        const stuckRes = await fetch('/api/stuck');
+        document.getElementById('latency-info').textContent = stats.avg_processing_latency_ms + ' ms avg';
+        document.getElementById('last-event').textContent   = 'Last event: ' + (stats.last_event_at || 'none');
+
+        const stuckRes = await fetch('/dashboard/stuck');
         const stuckAlerts = await stuckRes.json();
         const stuckContainer = document.getElementById('stuck-container');
         if (stuckAlerts.length > 0) {
-          const items = stuckAlerts.map(a => `<li>${a.alert_id} since ${a.since}</li>`).join('');
-          stuckContainer.innerHTML = `<div class="stuck-banner"><h3>⚠ Stuck Alerts (processing > 60s)</h3><ul>${items}</ul></div>`;
+          const items = stuckAlerts.map(a => `<li>${a.alert_id} — since ${a.since}</li>`).join('');
+          stuckContainer.innerHTML = `
+            <div class="stuck-banner">
+              <span class="stuck-label">Stuck &gt;60s</span>
+              <ul>${items}</ul>
+            </div>`;
         } else {
           stuckContainer.innerHTML = '';
         }
 
+        updateHealthStrip(stats, stuckAlerts.length);
         updateTimestamp();
       } catch(e) {
-        console.error('Refresh error:', e);
+        console.error('Stats refresh error:', e);
+      }
+
+      // Alerts table — separate fetch so a pipeline-down state doesn't stall the stats
+      try {
+        const alertsRes = await fetch('/dashboard/alerts?size=20');
+        const alerts = await alertsRes.json();
+        const tbody = document.getElementById('alert-tbody');
+        if (alerts.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="8" class="no-data">No alerts yet — waiting for pipeline…</td></tr>';
+        } else {
+          tbody.innerHTML = alerts.map(a => `
+            <tr>
+              <td class="mono">${a.alert_id.slice(0,8)}…</td>
+              <td class="title-cell">${a.title || ''}</td>
+              <td>${a.alert_type}</td>
+              <td><span class="sev ${sevClass(a.severity)}">${a.severity}</span></td>
+              <td class="mono">${a.source_ip}</td>
+              <td class="mono">${a.dest_ip}</td>
+              <td class="ts">${(a.timestamp||'').slice(0,19)}</td>
+              <td><span class="state stored">STORED</span></td>
+            </tr>`).join('');
+        }
+      } catch(e) {
+        console.error('Alerts fetch error:', e);
+      }
+    }
+
+    function openResetModal() {
+      document.getElementById('reset-confirm-input').value = '';
+      const btn = document.getElementById('reset-confirm-btn');
+      btn.disabled = true;
+      btn.style.opacity = '0.4';
+      document.getElementById('reset-error').style.display = 'none';
+      document.getElementById('reset-modal').style.display = 'flex';
+    }
+
+    function closeResetModal() {
+      document.getElementById('reset-modal').style.display = 'none';
+    }
+
+    async function doReset() {
+      const btn = document.getElementById('reset-confirm-btn');
+      btn.textContent = 'Resetting…';
+      btn.disabled = true;
+      try {
+        const resp = await fetch('/dashboard/reset', { method: 'POST' });
+        if (resp.ok) {
+          closeResetModal();
+          clearUI();
+          await refresh();
+        } else {
+          const err = await resp.json();
+          const el = document.getElementById('reset-error');
+          el.textContent = err.detail || 'Reset failed';
+          el.style.display = 'block';
+          btn.textContent = 'Confirm Reset';
+          btn.disabled = false;
+          btn.style.opacity = '1';
+        }
+      } catch(e) {
+        const el = document.getElementById('reset-error');
+        el.textContent = 'Network error: ' + e.message;
+        el.style.display = 'block';
+        btn.textContent = 'Confirm Reset';
+        btn.disabled = false;
+        btn.style.opacity = '1';
       }
     }
 
