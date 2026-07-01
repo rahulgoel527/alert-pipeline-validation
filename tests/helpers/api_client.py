@@ -37,10 +37,19 @@ class AlertPipelineAPIClient:
         resp.raise_for_status()
         return resp.json()
 
-    def generate_alerts(self, count: int = 1) -> dict:
+    def generate_alerts(self, count: int = 1, force_fingerprint=None, payload=None, **kwargs) -> dict:
+        merged_payload = {"source": self.source}
+        if payload:
+            merged_payload.update(payload)
+
+        body = {"count": count, "payload": merged_payload}
+        if force_fingerprint:
+            body["force_fingerprint"] = force_fingerprint
+        body.update(kwargs)
+
         resp = self.session.post(
             f"{self.base_url}/api/generate",
-            json={"count": count, "source": self.source},
+            json=body,
             timeout=10,
         )
         resp.raise_for_status()
