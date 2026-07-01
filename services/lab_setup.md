@@ -273,7 +273,7 @@ docker compose --profile pipeline up -d
 
 `--profile pipeline` activates the four app services (`api`, `event_processor`, `event_generator`, `dashboard`). Without it, only the infrastructure services (`redis`, `postgres`, `elasticsearch`, `dejavu`) start — useful for local development where you run app services directly on the host.
 
-Wait ~30 seconds for Elasticsearch to initialise, then check all 8 services are up:
+Wait ~30 seconds for Elasticsearch to initialise, then check all services are up:
 
 ```bash
 docker compose ps
@@ -327,11 +327,24 @@ curl "http://localhost:8000/api/alerts/search?severity=critical&alert_type=brute
 
 ## Tear Down
 
+**Stop pipeline services only** (leave infra running — useful when iterating):
 ```bash
-docker compose down -v
+docker compose stop api event_processor event_generator dashboard
 ```
 
-`-v` removes volumes. Omit it to keep Postgres data across restarts (though the API truncates the ledger on startup regardless — see Clean Slate below).
+**Stop and remove pipeline containers** (infra stays up):
+```bash
+docker compose rm -f -s api event_processor event_generator dashboard
+```
+
+**Stop everything** (infra + pipeline):
+```bash
+docker compose --profile pipeline down
+```
+
+Add `-v` to also remove volumes (Postgres data). Omit it to keep data across restarts — though the API truncates the ledger on every startup anyway (see Clean Slate below).
+
+> Note: `docker compose --profile pipeline down` tears down the shared network, which also stops infra containers. Use the targeted `stop`/`rm` commands above when you only want to restart the pipeline services.
 
 ---
 
