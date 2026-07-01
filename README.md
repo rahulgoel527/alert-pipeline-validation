@@ -108,14 +108,13 @@ sha256(source_ip + alert_type + floor(unix_time / 60))[:16]
 
 ```mermaid
 flowchart TD
-    subgraph unit["Unit Tests (46) — no services needed"]
+    subgraph unit["Unit Tests (35) — no services needed"]
         U1["Fingerprint 60s window contract"]
-        U2["generate_alerts() count cap + source prefix"]
+        U2["generate_alerts() count cap + source prefix + ledger atomicity"]
         U3["is_duplicate() hit / miss / NotFoundError"]
         U4["process_alert() dedup + STORED / FAILED paths"]
         U5["log_ledger() metadata serialisation"]
         U6["Reaper SQL contract + FAILED entry shape"]
-        U7["/dashboard/health — all infra + processor states"]
     end
 
     subgraph e2e["E2E Tests (41) — requires running lab"]

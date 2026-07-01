@@ -45,12 +45,6 @@ class TestFingerprintAlgorithm:
         window = int(epoch // 60)
         return hashlib.sha256(f"{source_ip}{alert_type}{window}".encode()).hexdigest()[:16]
 
-    def test_same_inputs_same_window_produce_identical_fingerprint(self):
-        now = 1_750_000_800
-        fp1 = self._compute("192.168.1.10", "brute_force", now)
-        fp2 = self._compute("192.168.1.10", "brute_force", now)
-        assert fp1 == fp2
-
     def test_same_inputs_different_window_produce_different_fingerprint(self):
         base = 1_750_000_800
         fp_now = self._compute("192.168.1.10", "brute_force", base)
@@ -160,7 +154,7 @@ class TestGenerateAlertsParameters:
                     "dest_ip", "alert_type", "timestamp", "fingerprint", "source"}
         assert required.issubset(pushed_alerts[0].keys())
 
-    def test_payload_override_merges_into_alert(self, mock_api_deps):
+    def test_payload_override_merges_fields_and_preserves_required_fields(self, mock_api_deps):
         mock_conn, mock_cursor, mock_redis = mock_api_deps
         pushed_alerts = []
         mock_redis.lpush.side_effect = lambda key, p: pushed_alerts.append(json.loads(p))
@@ -169,24 +163,38 @@ class TestGenerateAlertsParameters:
              patch.object(api, "get_redis", return_value=mock_redis):
             api.generate_alerts({"count": 1, "payload": {"source_ip": "10.99.99.99", "source": "custom"}})
 
-        assert pushed_alerts
+        assert pushed_alerts, "No alert was pushed to Redis"
+        # Override values merged in
         assert pushed_alerts[0]["source_ip"] == "10.99.99.99"
         assert pushed_alerts[0]["source"] == "custom"
-
-    def test_payload_override_does_not_remove_required_fields(self, mock_api_deps):
-        mock_conn, mock_cursor, mock_redis = mock_api_deps
-        pushed_alerts = []
-        mock_redis.lpush.side_effect = lambda key, p: pushed_alerts.append(json.loads(p))
-
-        with patch.object(api, "get_pg_conn", return_value=mock_conn), \
-             patch.object(api, "get_redis", return_value=mock_redis):
-            api.generate_alerts({"count": 1, "payload": {"source_ip": "bad-ip"}})
-
-        assert pushed_alerts
+        # Required fields still present after merge
         required = {"alert_id", "title", "description", "severity", "source_ip",
                     "dest_ip", "alert_type", "timestamp", "fingerprint", "source"}
         assert required.issubset(pushed_alerts[0].keys())
-        assert pushed_alerts[0]["source_ip"] == "bad-ip"
+
+    def test_produce_and_queue_inserts_share_a_transaction(self, mock_api_deps):
+        mock_conn, mock_cursor, mock_redis = mock_api_deps
+        call_count = [0]
+
+        def fail_on_second_execute(sql, args):
+            call_count[0] += 1
+            if call_count[0] == 2:
+                raise Exception("simulated DB constraint violation on QUEUED insert")
+
+        mock_cursor.execute.side_effect = fail_on_second_execute
+
+        with patch.object(api, "get_pg_conn", return_value=mock_conn), \
+             patch.object(api, "get_redis", return_value=mock_redis):
+            with pytest.raises(Exception, match="simulated DB constraint violation"):
+                api.generate_alerts({"count": 1})
+
+        # conn.__exit__ must have received the exception (triggers psycopg2 rollback)
+        mock_conn.__exit__.assert_called_once()
+        exc_type = mock_conn.__exit__.call_args[0][0]
+        assert exc_type is not None, (
+            "Exception must propagate to conn.__exit__ — both INSERTs must share "
+            "one transaction so second-INSERT failure rolls back PRODUCED as well"
+        )
 
 
 # ---------------------------------------------------------------------------

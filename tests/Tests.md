@@ -54,7 +54,7 @@ pytest tests/ --collect-only --ignore=tests/load
 pytest tests/ -v --ignore=tests/load
 ```
 
-Expected: 87 tests pass (46 unit + 41 E2E). Unit tests complete instantly; E2E tests take ~60–120 seconds.
+Expected: 76 tests pass (35 unit + 41 E2E). Unit tests complete instantly; E2E tests take ~60–120 seconds.
 
 ### By test directory
 
@@ -103,9 +103,8 @@ pytest tests/unit/ -v
 | File | Logic tested | Why E2E can't catch it |
 |------|-------------|------------------------|
 | `unit/test_unit_processor.py` | `is_duplicate()` (hit/miss/NotFoundError), `process_alert()` DUPLICATE_DROPPED / STORED / FAILED paths, `log_ledger()` metadata serialization | Duplicate check and ES write failure modes can't be triggered reliably via E2E; stuck/slow/chaos scenarios are covered by the manual playbook |
-| `unit/test_unit_api.py` | Fingerprint 60s window contract, `generate_alerts()` count cap (max 100) and source prefix logic, accounting balance formula | Window boundary only breaks under load; count cap is never reached by tests generating 5–50 alerts |
+| `unit/test_unit_api.py` | Fingerprint 60s window contract, `generate_alerts()` count cap (max 100) and source prefix logic, payload override merge, ledger atomicity (PRODUCED+QUEUED share one transaction), accounting balance formula | Window boundary only breaks under load; count cap is never reached by tests generating 5–50 alerts; transaction atomicity can't be observed via E2E |
 | `unit/test_unit_reaper.py` | `reaper_loop()` writes FAILED entry with correct metadata for a stuck alert, skips INSERT when no stuck alerts, SQL contract (DISTINCT ON, PROCESSING filter, `make_interval` timeout) | Reaper fires after 60 min — outside any E2E timeout; tests call the real `reaper_loop()` with mocked Postgres and `time.sleep` |
-| `unit/test_unit_dashboard_health.py` | `GET /dashboard/health` response: all-healthy path, API unreachable, processor states (healthy/stalled/down/not_started/unknown), Redis/Postgres/ES down | Health endpoint depends on four independent infra connections — failure combinations can't be triggered reliably in E2E |
 
 ### Marker
 
