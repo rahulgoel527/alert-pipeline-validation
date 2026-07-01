@@ -6,7 +6,7 @@ import time
 from elasticsearch.exceptions import NotFoundError
 
 from common import (
-    QUEUE_KEY, get_pg_conn, get_es, get_redis, log,
+    QUEUE_KEY, get_pg_conn, log,
     wait_for_postgres, wait_for_redis, wait_for_elasticsearch,
 )
 
@@ -16,9 +16,9 @@ ES_INDEX = os.environ["ES_INDEX"]
 STUCK_TIMEOUT_MINUTES = int(os.environ.get("STUCK_TIMEOUT_MINUTES", "60"))
 REAPER_INTERVAL_SECONDS = int(os.environ.get("REAPER_INTERVAL_SECONDS", "300"))
 
-def log_ledger(conn, alert_id, state, metadata=None):
-    with conn:
-        with conn.cursor() as cur:
+def log_ledger(pg_conn, alert_id, state, metadata=None):
+    with pg_conn:
+        with pg_conn.cursor() as cur:
             cur.execute(
                 "INSERT INTO alert_ledger (alert_id, state, source_service, metadata) VALUES (%s, %s, %s, %s)",
                 (alert_id, state, SERVICE, json.dumps(metadata or {}))
@@ -33,11 +33,10 @@ def is_duplicate(es, fingerprint):
             size=1,
         )
         return resp["hits"]["total"]["value"] > 0
-    except NotFoundError:
-        return False
-    except Exception:
-        return False
 
+    except Exception as exc:
+        log.warning("is_duplicate check failed for fingerprint %s: %s", fingerprint, exc)
+        return False
 
 def process_alert(alert, es, pg_conn):
     """Process a single alert through the pipeline.
@@ -45,7 +44,7 @@ def process_alert(alert, es, pg_conn):
     Args:
         alert: Alert dict from the queue.
         es: Elasticsearch client.
-        pg_conn: Postgres connection (caller owns lifecycle).
+        pg_conn: Postgres connection.
     """
     alert_id = alert.get("alert_id", "unknown")
     fingerprint = alert.get("fingerprint", "")
@@ -66,7 +65,6 @@ def process_alert(alert, es, pg_conn):
         log_ledger(pg_conn, alert_id, "FAILED", {"error": str(exc)})
         log(SERVICE, f"FAILED to store alert {alert_id}: {exc}")
 
-
 def reaper_loop():
     """Background thread: finds alerts stuck in PROCESSING beyond STUCK_TIMEOUT_MINUTES
     and writes FAILED to the ledger so accounting can balance."""
@@ -75,85 +73,66 @@ def reaper_loop():
     while True:
         time.sleep(REAPER_INTERVAL_SECONDS)
         try:
-            conn = get_pg_conn()
-            try:
-                with conn:
-                    with conn.cursor() as cur:
-                        cur.execute("""
-                            WITH latest AS (
-                                SELECT DISTINCT ON (alert_id) alert_id, state, timestamp
-                                FROM alert_ledger
-                                ORDER BY alert_id, id DESC
-                            )
-                            SELECT alert_id,
-                                   EXTRACT(EPOCH FROM (NOW() - timestamp)) / 60 AS stuck_minutes
-                            FROM latest
-                            WHERE state = 'PROCESSING'
-                              AND NOW() - timestamp > make_interval(mins => %s)
-                        """, (STUCK_TIMEOUT_MINUTES,))
-                        stuck = cur.fetchall()
+            pg_conn = get_pg_conn()
+            with pg_conn.cursor() as pg_cursor:
+                pg_cursor.execute("""
+                        WITH latest AS (
+                            SELECT DISTINCT ON (alert_id) alert_id, state, timestamp
+                            FROM alert_ledger
+                            ORDER BY alert_id, id DESC
+                        )
+                        SELECT alert_id,
+                               EXTRACT(EPOCH FROM (NOW() - timestamp)) / 60 AS stuck_minutes
+                        FROM latest
+                        WHERE state = 'PROCESSING'
+                          AND NOW() - timestamp > make_interval(mins => %s)
+                    """, (STUCK_TIMEOUT_MINUTES,))
+                stuck = pg_cursor.fetchall()
 
                 if not stuck:
                     continue
-
                 log(SERVICE, f"Reaper: found {len(stuck)} stuck alert(s), marking FAILED")
-                conn2 = get_pg_conn()
-                try:
-                    for alert_id, stuck_minutes in stuck:
-                        with conn2:
-                            with conn2.cursor() as cur:
-                                cur.execute(
-                                    "INSERT INTO alert_ledger (alert_id, state, source_service, metadata) "
-                                    "VALUES (%s, %s, %s, %s)",
-                                    (alert_id, "FAILED", SERVICE,
-                                     json.dumps({"reason": "stuck_timeout",
-                                                 "stuck_duration_minutes": round(stuck_minutes, 1)}))
-                                )
-                        log(SERVICE, f"Reaper: marked {alert_id} as FAILED "
-                            f"(stuck {round(stuck_minutes, 1)}m)")
-                finally:
-                    conn2.close()
-            finally:
-                conn.close()
+                for alert_id, stuck_minutes in stuck:
+                    log_ledger(
+                        pg_conn,
+                        alert_id,
+                        "FAILED",
+                        {
+                            "reason": "stuck_timeout",
+                            "stuck_duration_minutes": round(stuck_minutes, 1),
+                        },
+                    )
+                    log(SERVICE, f"Reaper: marked {alert_id} as FAILED (stuck {round(stuck_minutes, 1)}m)")
+
         except Exception as exc:
             log(SERVICE, f"Reaper error: {exc}")
-
+        finally:
+            pg_conn.close()
 
 def main():
     wait_for_postgres(SERVICE)
-    r = wait_for_redis(SERVICE)
-    es = wait_for_elasticsearch(SERVICE)
-
+    redis_client = wait_for_redis(SERVICE)
+    es_client = wait_for_elasticsearch(SERVICE)
     reaper = threading.Thread(target=reaper_loop, daemon=True)
     reaper.start()
-
     log(SERVICE, "Processor started, polling Redis...")
     while True:
-        result = r.blpop(QUEUE_KEY, timeout=5)
+        result = redis_client.blpop(QUEUE_KEY, timeout=5)
         if result is None:
             continue
         _, raw = result
         alert_id = "unknown"
+        pg_conn = get_pg_conn()
         try:
             alert = json.loads(raw)
             alert_id = alert.get("alert_id", "unknown")
-            conn = get_pg_conn()
-            try:
-                process_alert(alert, es, conn)
-            finally:
-                conn.close()
+            process_alert(alert, es_client, pg_conn)
         except Exception as exc:
             log(SERVICE, f"Unhandled error processing alert {alert_id}: {exc}")
             if alert_id != "unknown":
-                try:
-                    conn = get_pg_conn()
-                    try:
-                        log_ledger(conn, alert_id, "FAILED", {"error": str(exc)})
-                    finally:
-                        conn.close()
-                except Exception:
-                    pass
-
+                log_ledger(pg_conn, alert_id, "FAILED", {"error": str(exc)})
+        finally:
+            pg_conn.close()
 
 if __name__ == "__main__":
     main()
