@@ -93,15 +93,19 @@ app = FastAPI(lifespan=lifespan)
 def health():
     services = {}
     try:
-        conn = get_pg_conn(); conn.close(); services["postgres"] = True
+        with get_pg_conn() as conn:
+            services["postgres"] = True
     except Exception:
         services["postgres"] = False
     try:
-        es = get_es(); es.cluster.health(); services["elasticsearch"] = True
+        with get_es() as conn:
+            services["elasticsearch"] = True
     except Exception:
         services["elasticsearch"] = False
     try:
-        r = get_redis(); r.ping(); services["redis"] = True
+        r = get_redis()
+        r.ping()
+        services["redis"] = True
     except Exception:
         services["redis"] = False
     return {"status": "ok", "services": services}
