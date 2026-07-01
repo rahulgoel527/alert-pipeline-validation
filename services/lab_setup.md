@@ -264,18 +264,6 @@ Appbaseio Dejavu is a browser-based Elasticsearch data explorer. It connects dir
 
 ---
 
-## First-Time Setup
-
-Register the shared git hooks (one-time, per clone):
-
-```bash
-git config core.hooksPath .githooks
-```
-
-This enables the `post-commit` hook that reminds you to run `/update-docs` in Claude Code after changes to `services/` or `tests/`.
-
----
-
 ## Run
 
 ```bash
