@@ -1,25 +1,27 @@
+import os
 import pytest
 
 from helpers.api_client import AlertPipelineAPIClient
 from helpers.ledger_client import LedgerClient
-from helpers.wait_utils import wait_for_alert_terminal, wait_for_new_alerts_processed
+from helpers.wait_utils import wait_for_alert_terminal
 
 
 @pytest.fixture(scope="session")
 def api_client():
     """Returns configured API client; exits immediately if any lab service is not ready."""
-    client = AlertPipelineAPIClient("http://localhost:8000")
+    base_url = os.environ.get("API_BASE_URL", "http://localhost:8000")
+    client = AlertPipelineAPIClient(base_url)
     try:
         health = client.health()
     except Exception as exc:
         pytest.exit(
-            f"API not reachable at localhost:8000 — run `docker compose -f services/docker-compose.yml up --build -d` first: {exc}",
+            f"API not reachable at {base_url} — run `cd services/ && docker compose -p alertlab --profile pipeline up --build -d` first: {exc}",
             returncode=1,
         )
     not_ready = [svc for svc, up in health.get("services", {}).items() if not up]
     if not_ready:
         pytest.exit(
-            f"Lab services not ready — run `docker compose -f services/docker-compose.yml up --build -d`: {not_ready}",
+            f"Lab services not ready — run `cd services/ && docker compose -p alertlab --profile pipeline up --build -d`: {not_ready}",
             returncode=1,
         )
     return client
@@ -45,21 +47,4 @@ def ledger_client():
     return client
 
 
-@pytest.fixture
-def baseline_stats(api_client):
-    """Captures current stats before test runs to isolate test-generated alert noise."""
-    return api_client.get_stats()
 
-
-@pytest.fixture
-def generate_and_wait(api_client, ledger_client):
-    """Factory: generates N alerts via API, waits for all to reach terminal state.
-    Returns list of alert_ids."""
-    def _generate(count=1, timeout=60):
-        result = api_client.generate_alerts(count=count)
-        alert_ids = result["alert_ids"]
-        for alert_id in alert_ids:
-            wait_for_alert_terminal(ledger_client, alert_id, timeout=timeout)
-        return alert_ids
-
-    return _generate

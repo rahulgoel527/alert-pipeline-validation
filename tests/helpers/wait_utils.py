@@ -18,12 +18,8 @@ def poll_until(condition_fn, timeout=30, interval=2, description="condition"):
     raise TimeoutError(f"Timed out waiting for {description} after {timeout}s{detail}")
 
 
-def wait_for_alert_terminal(ledger_client, alert_id, timeout=30, allow_stuck=False):
-    """Wait until alert reaches a terminal state. Returns the terminal state string.
-
-    If allow_stuck=True, returns the current state even if it's still PROCESSING at timeout
-    (handles the 2% hung-worker simulation). If allow_stuck=False (default), raises TimeoutError.
-    """
+def wait_for_alert_terminal(ledger_client, alert_id, timeout=30):
+    """Wait until alert reaches a terminal state. Returns the terminal state string."""
     result = {}
 
     def check():
@@ -31,15 +27,9 @@ def wait_for_alert_terminal(ledger_client, alert_id, timeout=30, allow_stuck=Fal
         if state in TERMINAL_STATES:
             result["state"] = state
             return True
-        result["last_state"] = state
         return False
 
-    try:
-        poll_until(check, timeout=timeout, description=f"alert {alert_id} terminal state")
-    except TimeoutError:
-        if allow_stuck and result.get("last_state") == "PROCESSING":
-            return "PROCESSING"
-        raise
+    poll_until(check, timeout=timeout, description=f"alert {alert_id} terminal state")
     return result["state"]
 
 
