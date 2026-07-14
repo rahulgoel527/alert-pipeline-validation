@@ -33,12 +33,15 @@ def wait_for_alert_terminal(ledger_client, alert_id, timeout=30):
     return result["state"]
 
 
-def wait_for_accounting_balanced(api_client, timeout=30):
-    """Wait until /api/stats reports accounting_balanced=true. Returns stats dict."""
+def wait_for_accounting_balanced(api_client, timeout=30, source=None):
+    """Wait until /api/stats reports accounting_balanced=true. Returns stats dict.
+
+    source: if given, scopes the check to alerts produced with that source label.
+    """
     result = {}
 
     def check():
-        stats = api_client.get_stats()
+        stats = api_client.get_stats(source=source)
         if stats.get("accounting_balanced"):
             result["stats"] = stats
             return True
