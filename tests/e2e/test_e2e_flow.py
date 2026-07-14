@@ -1,50 +1,48 @@
 """Flow 1: End-to-end pipeline validation tests."""
 import ipaddress
 import pytest
+import uuid
 
 from helpers.wait_utils import (
     wait_for_alert_terminal,
+    wait_for_accounting_balanced
 )
 
 pytestmark = pytest.mark.e2e
 
-
-def test_alert_generation_produces_to_queue(api_client, ledger_client):
-    """Generate an alert via API → verify it appears in ledger with PRODUCED state."""
+@pytest.fixture
+def _stored_alert(api_client, ledger_client):
     result = api_client.generate_alerts(count=1)
-    assert result["generated"] == 1
     alert_id = result["alert_ids"][0]
+    terminal = wait_for_alert_terminal(ledger_client, alert_id, timeout=30)
+    assert terminal == "STORED"
+    return alert_id
 
+def test_alert_generation_produces_to_queue(ledger_client, _stored_alert):
+    """Generate an alert via API → verify it appears in ledger with PRODUCED state."""
+    alert_id = _stored_alert
     states = ledger_client.get_alert_states(alert_id)
     state_names = [s["state"] for s in states]
     assert "PRODUCED" in state_names, f"Expected PRODUCED in {state_names}"
 
 
-def test_alert_flows_through_complete_pipeline(api_client, ledger_client):
-    """Generate alert → poll until STORED → verify exists in ES with correct data."""
-    result = api_client.generate_alerts(count=1)
-    alert_id = result["alert_ids"][0]
-
-    terminal = wait_for_alert_terminal(ledger_client, alert_id, timeout=30)
-    assert terminal == "STORED", f"Alert should be STORED, got {terminal}"
-
+def test_alert_flows_through_complete_pipeline(api_client,_stored_alert):
+    """Generate alert → poll until STORED → verify exists in ES → verify findable via investigation API."""
+    alert_id = _stored_alert
     alert = api_client.get_alert(alert_id)
     assert alert["alert_id"] == alert_id
-    assert alert["severity"] in ("low", "medium", "high", "critical")
-    assert alert["alert_type"] in (
-        "brute_force", "malware", "phishing", "port_scan", "data_exfiltration"
-    )
+    assert alert["alert_type"] in ("brute_force", "malware", "phishing", "port_scan", "data_exfiltration")
+
+    # Investigation search — covers production issue: Investigation API returns incomplete results
+    search_results = api_client.search_alerts(q=None, severity=alert["severity"], size=100)
+    found = any(a["alert_id"] == alert_id for a in search_results)
+    assert found, f"Alert {alert_id} not findable via investigation search after STORED"
 
 
-def test_alert_lifecycle_states_are_complete(api_client, ledger_client):
+def test_alert_lifecycle_states_are_complete(ledger_client, _stored_alert):
     """Generate alert → wait for terminal state → verify ledger has all states in order:
     PRODUCED → QUEUED → PROCESSING → STORED"""
-    result = api_client.generate_alerts(count=1)
-    alert_id = result["alert_ids"][0]
-
-    terminal = wait_for_alert_terminal(ledger_client, alert_id, timeout=30)
-    assert terminal == "STORED", f"Alert should be STORED, got {terminal}"
-
+    alert_id = _stored_alert
     states = [s["state"] for s in ledger_client.get_alert_states(alert_id)]
     for expected in ("PRODUCED", "QUEUED", "PROCESSING", "STORED"):
         assert expected in states, f"Missing {expected} in lifecycle {states}"
@@ -64,13 +62,9 @@ def test_alert_lifecycle_states_are_complete(api_client, ledger_client):
     )
 
 
-def test_alert_data_integrity(api_client, ledger_client):
+def test_alert_data_integrity(api_client, _stored_alert):
     """Generate alert → retrieve from ES → verify all fields are present and valid."""
-    result = api_client.generate_alerts(count=1)
-    alert_id = result["alert_ids"][0]
-
-    terminal = wait_for_alert_terminal(ledger_client, alert_id, timeout=30)
-    assert terminal == "STORED", f"Alert should be STORED, got {terminal}"
+    alert_id = _stored_alert
 
     alert = api_client.get_alert(alert_id)
     assert alert["alert_id"] == alert_id
@@ -103,25 +97,17 @@ def test_multiple_alerts_all_processed(api_client, ledger_client):
 def test_pipeline_stats_are_accurate(api_client, ledger_client):
     """Generate known number of alerts → wait → verify /api/stats counts match ledger."""
     count = 5
-    before = api_client.get_stats()
-    result = api_client.generate_alerts(count=count)
+    test_source = f"Test_{uuid.uuid4().hex[:8]}"
+
+    result = api_client.generate_alerts(count=count, payload={"source": test_source})
     alert_ids = result["alert_ids"]
 
     for alert_id in alert_ids:
         wait_for_alert_terminal(ledger_client, alert_id, timeout=60)
 
-    after = api_client.get_stats()
+    stats = wait_for_accounting_balanced(api_client, timeout=60, source=test_source)
 
-    # total_produced must have grown by at least count (background may also add)
-    assert after["total_produced"] >= before["total_produced"] + count
-
-    # The terminal counts from our generated alerts must match their actual states
-    terminal_counts = {}
-    for alert_id in alert_ids:
-        state = ledger_client.get_current_state(alert_id)
-        terminal_counts[state] = terminal_counts.get(state, 0) + 1
-
-    # Stats must reflect at least as many of each terminal state as we generated
-    assert after["total_stored"] >= terminal_counts.get("STORED", 0)
-    assert after["total_failed"] >= terminal_counts.get("FAILED", 0)
-    assert after["total_duplicates"] >= terminal_counts.get("DUPLICATE_DROPPED", 0)
+    assert stats["accounting_balanced"] is True
+    assert stats["unaccounted"] == 0
+    assert stats["total_produced"] == count
+    assert stats["total_duplicates"] == 0

@@ -27,8 +27,9 @@ class AlertPipelineAPIClient:
         resp.raise_for_status()
         return resp.json()
 
-    def get_stats(self) -> dict:
-        resp = self.session.get(f"{self.base_url}/api/stats", timeout=5)
+    def get_stats(self, source=None) -> dict:
+        params = {"source": source} if source is not None else {}
+        resp = self.session.get(f"{self.base_url}/api/stats", params=params, timeout=5)
         resp.raise_for_status()
         return resp.json()
 
