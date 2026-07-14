@@ -1,0 +1,181 @@
+{
+  "title": "Alert Pipeline — Observability",
+  "uid": "alertlab-main",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "10s",
+  "time": { "from": "now-15m", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "alert_id",
+        "label": "Alert ID",
+        "type": "textbox",
+        "current": { "value": "" },
+        "hide": 0
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Alert Throughput (rate/min)",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 7 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "rate(alerts_produced_total[1m]) * 60", "legendFormat": "produced" },
+        { "expr": "rate(alerts_stored_total[1m]) * 60", "legendFormat": "stored" },
+        { "expr": "rate(alerts_failed_total[1m]) * 60", "legendFormat": "failed" },
+        { "expr": "rate(alerts_duplicate_total[1m]) * 60", "legendFormat": "duplicate" }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Queue Depth",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 0, "w": 6, "h": 7 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "alerts_queue_depth", "legendFormat": "queue depth" }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Failure Rate %",
+      "type": "timeseries",
+      "gridPos": { "x": 18, "y": 0, "w": 6, "h": 7 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "100 * rate(alerts_failed_total[2m]) / clamp_min(rate(alerts_produced_total[2m]), 0.001)",
+          "legendFormat": "failure %"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Processing Latency — P50 / P95 / P99",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 7, "w": 12, "h": 7 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "s" }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, rate(alert_processing_latency_seconds_bucket[2m]))",
+          "legendFormat": "P50"
+        },
+        {
+          "expr": "histogram_quantile(0.95, rate(alert_processing_latency_seconds_bucket[2m]))",
+          "legendFormat": "P95"
+        },
+        {
+          "expr": "histogram_quantile(0.99, rate(alert_processing_latency_seconds_bucket[2m]))",
+          "legendFormat": "P99"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Redis — Queue Ops/s & Memory",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 7, "w": 12, "h": 7 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "rate(redis_commands_processed_total[1m])",
+          "legendFormat": "ops/s"
+        },
+        {
+          "expr": "redis_memory_used_bytes / 1024 / 1024",
+          "legendFormat": "memory MB"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Elasticsearch — Indexing Rate & JVM Heap %",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 14, "w": 12, "h": 7 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "rate(elasticsearch_indices_indexing_index_total{index=\"security_alerts\"}[1m])",
+          "legendFormat": "index ops/s"
+        },
+        {
+          "expr": "100 * elasticsearch_jvm_memory_used_bytes{area=\"heap\"} / clamp_min(elasticsearch_jvm_memory_max_bytes{area=\"heap\"}, 1)",
+          "legendFormat": "JVM heap %"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Postgres — Active Connections & Query Latency",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 14, "w": 12, "h": 7 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "pg_stat_activity_count{datname=\"alert_ledger\"}",
+          "legendFormat": "connections"
+        },
+        {
+          "expr": "rate(pg_stat_database_blk_read_time_seconds_total{datname=\"alert_ledger\"}[1m])",
+          "legendFormat": "blk read time/s"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Service Log Stream",
+      "type": "logs",
+      "gridPos": { "x": 0, "y": 21, "w": 24, "h": 8 },
+      "datasource": { "type": "loki", "uid": "loki" },
+      "options": {
+        "showTime": true,
+        "showLabels": true,
+        "wrapLogMessage": false,
+        "sortOrder": "Descending"
+      },
+      "targets": [
+        { "expr": "{job=\"alertlab\"}", "legendFormat": "" }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "Error Logs",
+      "type": "logs",
+      "gridPos": { "x": 0, "y": 29, "w": 12, "h": 8 },
+      "datasource": { "type": "loki", "uid": "loki" },
+      "options": {
+        "showTime": true,
+        "showLabels": true,
+        "wrapLogMessage": false,
+        "sortOrder": "Descending"
+      },
+      "targets": [
+        { "expr": "{job=\"alertlab\"} | json | level =~ `ERROR|error`", "legendFormat": "" }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "Per-Alert Log Trace ($alert_id)",
+      "description": "Paste an alert_id in the variable field above to see its full journey across services",
+      "type": "logs",
+      "gridPos": { "x": 12, "y": 29, "w": 12, "h": 8 },
+      "datasource": { "type": "loki", "uid": "loki" },
+      "options": {
+        "showTime": true,
+        "showLabels": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Ascending"
+      },
+      "targets": [
+        { "expr": "{job=\"alertlab\", alert_id=\"$alert_id\"}", "legendFormat": "" }
+      ]
+    }
+  ]
+}

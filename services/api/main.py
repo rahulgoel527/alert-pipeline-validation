@@ -6,6 +6,8 @@ from contextlib import asynccontextmanager
 
 from elasticsearch import NotFoundError
 from fastapi import Body, FastAPI, HTTPException, Query
+from fastapi.responses import PlainTextResponse
+from prometheus_client import Counter, Gauge, Histogram, generate_latest, CONTENT_TYPE_LATEST
 
 from common import (
     QUEUE_KEY, get_pg_conn, get_es, get_redis, log,
@@ -16,6 +18,20 @@ from common.stats import get_pipeline_stats
 from common.alert_factory import (
     ALERT_TYPES, SEVERITIES, build_alert,
 )
+
+# Prometheus metrics
+_alerts_produced = Counter("alerts_produced_total", "Total alerts produced")
+_alerts_stored = Counter("alerts_stored_total", "Total alerts stored in ES")
+_alerts_failed = Counter("alerts_failed_total", "Total alerts that failed processing")
+_alerts_duplicate = Counter("alerts_duplicate_total", "Total duplicate alerts dropped")
+_queue_depth = Gauge("alerts_queue_depth", "Current Redis queue depth")
+_processing_latency = Histogram(
+    "alert_processing_latency_seconds",
+    "Time from PROCESSING to STORED",
+    buckets=[0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0],
+)
+# Tracks highest ledger id already observed into the histogram — prevents double-counting
+_last_latency_id: int = 0
 
 SERVICE = "api"
 ES_INDEX = os.environ["ES_INDEX"]
@@ -144,10 +160,10 @@ def get_alert(alert_id: str):
 
 
 @app.get("/api/stats")
-def get_stats():
+def get_stats(source: str | None = Query(default=None)):
     conn = get_pg_conn()
     try:
-        stats = get_pipeline_stats(conn)
+        stats = get_pipeline_stats(conn, source=source)
     finally:
         conn.close()
 
@@ -157,7 +173,58 @@ def get_stats():
         queue_depth = -1
 
     stats["queue_depth"] = queue_depth
+
+    # Keep Prometheus gauges/counters in sync with ledger totals
+    _queue_depth.set(max(0, queue_depth))
+
     return stats
+
+
+@app.get("/metrics", response_class=PlainTextResponse)
+def metrics():
+    """Prometheus metrics endpoint — exposes pipeline counters, queue depth, and latency histogram."""
+    global _last_latency_id
+
+    # Sync queue depth on every scrape
+    try:
+        _queue_depth.set(get_redis().llen(QUEUE_KEY))
+    except Exception:
+        pass
+
+    try:
+        conn = get_pg_conn()
+        try:
+            # Sync ledger totals into counters (reset-safe: set absolute value via internal state)
+            stats = get_pipeline_stats(conn)
+            def _sync_counter(counter, value):
+                with counter._lock:
+                    counter._value._value = float(value)
+            _sync_counter(_alerts_produced, stats.get("total_produced", 0))
+            _sync_counter(_alerts_stored, stats.get("total_stored", 0))
+            _sync_counter(_alerts_failed, stats.get("total_failed", 0))
+            _sync_counter(_alerts_duplicate, stats.get("total_duplicates", 0))
+
+            # Feed new STORED entries into the latency histogram — incremental to avoid double-counting
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT id, (metadata->>'processing_duration_ms')::float
+                    FROM alert_ledger
+                    WHERE state = 'STORED'
+                      AND metadata ? 'processing_duration_ms'
+                      AND id > %s
+                    ORDER BY id
+                    LIMIT 500
+                """, (_last_latency_id,))
+                for row_id, ms in cur.fetchall():
+                    _processing_latency.observe(ms / 1000.0)
+                    if row_id > _last_latency_id:
+                        _last_latency_id = row_id
+        finally:
+            conn.close()
+    except Exception:
+        pass
+
+    return PlainTextResponse(generate_latest().decode("utf-8"), media_type=CONTENT_TYPE_LATEST)
 
 
 @app.get("/api/ledger/{alert_id}")
@@ -235,7 +302,7 @@ def generate_alerts(body: dict = Body(default=None)):
                 with conn.cursor() as cur:
                     cur.execute(
                         "INSERT INTO alert_ledger (alert_id, state, source_service, metadata) VALUES (%s, %s, %s, %s)",
-                        (alert["alert_id"], "PRODUCED", SERVICE, json.dumps({}))
+                        (alert["alert_id"], "PRODUCED", SERVICE, json.dumps({"source": alert.get("source", "unknown")}))
                     )
                     cur.execute(
                         "INSERT INTO alert_ledger (alert_id, state, source_service, metadata) VALUES (%s, %s, %s, %s)",

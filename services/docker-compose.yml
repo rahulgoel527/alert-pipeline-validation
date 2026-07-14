@@ -172,6 +172,70 @@ services:
     ports: ["1358:1358"]
     networks: [pipeline_net]
 
+  # ---------------------------------------------------------------------------
+  # Observability stack
+  # ---------------------------------------------------------------------------
+
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    ports: ["9090:9090"]
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    networks: [pipeline_net]
+    depends_on:
+      api: {condition: service_healthy}
+
+  grafana:
+    image: grafana/grafana:10.4.0
+    ports: ["3000:3000"]
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    networks: [pipeline_net]
+    depends_on: [prometheus, loki]
+
+  loki:
+    image: grafana/loki:2.9.4
+    ports: ["3100:3100"]
+    command: -config.file=/etc/loki/local-config.yaml
+    networks: [pipeline_net]
+
+  promtail:
+    image: grafana/promtail:2.9.4
+    volumes:
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./promtail/config.yml:/etc/promtail/config.yml:ro
+    command: -config.file=/etc/promtail/config.yml
+    networks: [pipeline_net]
+    depends_on: [loki]
+
+  redis_exporter:
+    image: oliver006/redis_exporter:v1.58.0
+    environment:
+      REDIS_ADDR: "redis://redis:6379"
+    networks: [pipeline_net]
+    depends_on:
+      redis: {condition: service_healthy}
+
+  postgres_exporter:
+    image: prometheuscommunity/postgres-exporter:v0.15.0
+    environment:
+      DATA_SOURCE_NAME: "postgresql://ledger:ledger123@postgres:5432/alert_ledger?sslmode=disable"
+    networks: [pipeline_net]
+    depends_on:
+      postgres: {condition: service_healthy}
+
+  elasticsearch_exporter:
+    image: prometheuscommunity/elasticsearch-exporter:v1.7.0
+    command: ["--es.uri=http://elasticsearch:9200", "--es.all", "--es.indices"]
+    networks: [pipeline_net]
+    depends_on:
+      elasticsearch: {condition: service_healthy}
+
 networks:
   pipeline_net:
     driver: bridge

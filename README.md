@@ -117,14 +117,18 @@ flowchart TD
         U6["Reaper SQL contract + FAILED entry shape"]
     end
 
-    subgraph e2e["E2E Tests (39) — requires running lab"]
-        E1["Full pipeline flow\nPRODUCED → QUEUED → STORED in ES"]
+    subgraph e2e["E2E Tests (44) — requires running lab"]
+        E1["Full pipeline flow\nPRODUCED → QUEUED → STORED in ES + investigation API"]
         E2["Duplicate detection\nDUPLICATE_DROPPED · ES exclusion · ledger metadata"]
-        E3["Failure scenarios\nFAILED state · ES exclusion · pipeline recovery"]
-        subgraph slow["Slow Tests (4) — Docker socket required"]
+        E3["Failure scenarios\nFAILED state · retry behavior · metrics · pipeline recovery"]
+        subgraph slow["Slow Tests (7) — Docker socket required"]
             S1["ES unavailable → FAILED"]
             S2["Redis pause → resume"]
             S3["Burst stability (50 alerts)"]
+            S4["ES retry-success path"]
+            S5["Postgres down → recovery"]
+            S6["Processor pause → alerts survive (data-loss scenario)"]
+            S7["Queue at capacity → 429"]
         end
     end
 
@@ -147,8 +151,8 @@ pytest tests/e2e/ -v
 # Full suite excluding load
 pytest tests/ -v --ignore=tests/load
 
-# Load test (headless)
-cd tests/load && locust -f locustfile.py --headless -u 50 -r 5 -t 2m
+# Load test (headless via Makefile)
+make load-test
 ```
 
 See [tests/Tests.md](tests/Tests.md) for full setup, marker reference, and design tradeoffs.
