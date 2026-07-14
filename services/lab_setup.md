@@ -1,6 +1,31 @@
 # Alert Pipeline Lab — Setup Guide
-> The code is AI-Assisted but design trade-offs are co-authored by me and reviewed before implementation. 
-> This lab is intended for SDET technical assignment evaluation. 
+> The code is AI-Assisted but design trade-offs are co-authored by me and reviewed before implementation.
+> This lab is intended for SDET technical assignment evaluation.
+
+## Contents
+
+- [Architecture Overview](#architecture-overview)
+- [Prerequisites](#prerequisites)
+- [Run](#run)
+- [Access](#access)
+- [Services](#services)
+- [Data Flow](#data-flow)
+- [Alert Model](#alert-model)
+- [Postgres Ledger](#postgres-ledger)
+- [API Endpoints](#api-endpoints-port-8000)
+- [Stats Response](#stats-response)
+- [Generator Behavior](#generator-behavior)
+- [Processor Behavior](#processor-behavior)
+- [Dashboard](#dashboard-port-8050)
+- [Dejavu](#dejavu-port-1358)
+- [Local Development](#local-development)
+- [Validate](#validate)
+- [Generate Alerts on Demand](#generate-alerts-on-demand)
+- [Tear Down](#tear-down)
+- [Design Tradeoffs](#design-tradeoffs)
+- [Known Limitations](#known-limitations)
+
+---
 
 ## Architecture Overview
 
@@ -41,6 +66,49 @@
 
 ---
 
+## Prerequisites
+
+- Docker Desktop ≥ 24 (or Docker Engine + Compose plugin ≥ 2.20)
+- 4 GB RAM available to Docker (Elasticsearch needs ~512 MB heap)
+- Python 3.12 on the host (matches the `python:3.12-alpine` Dockerfiles)
+
+---
+
+## Run
+
+```bash
+cd services/
+docker compose -p alertlab up -d
+docker compose -p alertlab --profile pipeline up -d
+```
+
+The first command starts infrastructure (`redis`, `postgres`, `elasticsearch`, `dejavu`, `dashboard`). The second activates the three pipeline services (`api`, `event_processor`, `event_generator`).
+
+Wait ~30 seconds for Elasticsearch to initialise, then check all services are up:
+
+```bash
+docker compose -p alertlab ps
+```
+
+---
+
+## Access
+
+| Service | URL |
+|---------|-----|
+| Dashboard | http://localhost:8050 |
+| API health | http://localhost:8000/api/health |
+| API docs (OpenAPI) | http://localhost:8000/docs |
+| API stats | http://localhost:8000/api/stats |
+| API metrics (Prometheus) | http://localhost:8000/metrics |
+| Recent alerts | http://localhost:8000/api/alerts |
+| Dejavu | http://localhost:1358 |
+| Grafana (metrics + logs) | http://localhost:3000 |
+| Prometheus | http://localhost:9090 |
+| Loki | http://localhost:3100 |
+
+---
+
 ## Services
 
 **Pipeline services (Python):**
@@ -60,6 +128,18 @@
 | postgres | 5432 | State ledger — every lifecycle transition |
 | elasticsearch | 9200 | Final alert store (searchable) |
 | dejavu | 1358 | ES data browser (optional) |
+
+**Observability (monitoring stack):**
+
+| Component | Port | Role |
+|-----------|------|------|
+| grafana | 3000 | Unified metrics + logs dashboard |
+| prometheus | 9090 | Metrics scraper (API, Redis, Postgres, ES) |
+| loki | 3100 | Log aggregation backend |
+| promtail | — | Ships container stdout (JSON) to Loki |
+| redis_exporter | — | Redis queue/memory metrics for Prometheus |
+| postgres_exporter | — | Postgres connection/latency metrics |
+| elasticsearch_exporter | — | ES indexing/heap metrics |
 
 ---
 
@@ -142,8 +222,14 @@ GET  /api/alerts/{alert_id}
 GET  /api/alerts/search?q=&severity=&alert_type=&source=&size=
      → filtered search — all params optional, ANDed together
 
-GET  /api/stats
+GET  /api/stats[?source=<label>]
      → pipeline accounting snapshot (see Stats section below)
+     → ?source= scopes all counts to alerts whose PRODUCED row carries that source label
+
+GET  /metrics
+     → Prometheus text exposition — alerts_produced_total, alerts_stored_total,
+       alerts_failed_total, alerts_duplicate_total, alerts_queue_depth,
+       alert_processing_latency_seconds histogram
 
 GET  /api/ledger/{alert_id}
      → full ordered state history for one alert from Postgres
@@ -182,7 +268,9 @@ OpenAPI docs available at **http://localhost:8000/docs** when running.
 }
 ```
 
-`accounting_balanced` is `true` when `total_stored + total_failed + total_duplicates + currently_queued + currently_processing == total_produced`. The validate script polls this until true.
+`accounting_balanced` is `true` when `total_stored + total_failed + total_duplicates + currently_queued + currently_processing == total_produced`.
+
+When `?source=<label>` is supplied, all counts are scoped to alerts whose PRODUCED ledger row has `metadata->>'source' = <label>`. This lets tests assert balance for a specific injected batch without interference from background traffic — e.g. `GET /api/stats?source=Test_a3f2b1c0`.
 
 ---
 
@@ -200,26 +288,22 @@ OpenAPI docs available at **http://localhost:8000/docs** when running.
 
 - Polls Redis continuously using `BLPOP` with 5s timeout
 - Writes `PROCESSING` to ledger before doing any work
-- **Deduplication:** searches ES for a matching fingerprint; on hit writes `DUPLICATE_DROPPED` and discards the alert without writing to ES
-- **Success path:** `es.index(index, id=alert_id, document=alert)` then writes `STORED`
-- **Exception path:** writes `FAILED` with error metadata
+- **Deduplication:** searches ES for a matching fingerprint; on hit writes `DUPLICATE_DROPPED` and discards the alert
+- **Success path:** indexes alert to ES then writes `STORED` with `processing_duration_ms` in metadata
+- **Retry path:** on ES write failure, retries up to `MAX_ES_RETRIES` times (default **3**) with exponential backoff before giving up
+- **Exception path:** after retries exhausted, writes `FAILED` with `error` and `attempt_count` in metadata
 
-Stuck/slow/failure simulation is intentionally absent from the processor code — those chaos scenarios are covered by the manual playbook in `tests/EXPLORATORY_CHAOS_TESTING.md`.
+Stuck/slow/failure simulation is intentionally absent — those chaos scenarios are covered by the manual playbook in `tests/EXPLORATORY_CHAOS_TESTING.md`.
 
 ### Stuck-Alert Reaper
 
-A background thread runs alongside the processor. Every `REAPER_INTERVAL_SECONDS` (default **300s / 5 min**) it queries Postgres for alerts whose latest ledger state is `PROCESSING` and that `PROCESSING` row is older than `STUCK_TIMEOUT_MINUTES` (default **60 minutes**). For each one it writes a `FAILED` entry with metadata:
+A background thread runs every `REAPER_INTERVAL_SECONDS` (default **300s**). It queries Postgres for alerts whose latest state is `PROCESSING` and that row is older than `STUCK_TIMEOUT_MINUTES` (default **60 min**), then writes a `FAILED` entry:
 
 ```json
 {"reason": "stuck_timeout", "stuck_duration_minutes": 63.2}
 ```
 
-This means:
-- Stuck alerts are **visible on the dashboard** as `PROCESSING` for up to an hour — a realistic hung-worker scenario
-- After the timeout they flip to `FAILED` — `accounting_balanced` recovers automatically
-- The full history (`PROCESSING` → `FAILED`) is preserved in the ledger for audit/test assertions
-
-**Configuring the thresholds** via `docker-compose.yml` environment variables on the `event_processor` service:
+The full `PROCESSING` → `FAILED` history is preserved in the ledger. Configure via `docker-compose.yml` on the `event_processor` service:
 
 ```yaml
 environment:
@@ -227,12 +311,7 @@ environment:
   REAPER_INTERVAL_SECONDS: "300" # how often the reaper checks
 ```
 
-For faster testing (e.g. verify the reaper fires in a short test run), set both to smaller values:
-
-```yaml
-  STUCK_TIMEOUT_MINUTES: "2"
-  REAPER_INTERVAL_SECONDS: "30"
-```
+For faster testing, set both to smaller values (e.g. `"2"` and `"30"`).
 
 ---
 
@@ -250,61 +329,25 @@ For faster testing (e.g. verify the reaper fires in a short test run), set both 
 
 ```
 GET  /dashboard/health        → infra + processor health snapshot
-     → {"redis": {"status": "healthy|down"}, "postgres": {"status": "healthy|down"},
-        "elasticsearch": {"status": "healthy|down"},
-        "api": {"status": "healthy|unreachable", "latency_ms": 42},
-        "processor": {"status": "healthy|stalled|down|not_started|unknown", "last_seen_s": 12}}
 GET  /dashboard/stats         → pipeline accounting snapshot (same shape as /api/stats)
 GET  /dashboard/alerts?size=N → recent alerts from ES, newest first (default 20, max 100)
 GET  /dashboard/stuck         → alerts stuck in PROCESSING > 60s
-POST /dashboard/reset         → wipe all data (ledger + ES index + Redis queue) → {"reset": true}
+POST /dashboard/reset         → wipe all data (ledger + ES index + Redis queue)
 ```
 
 ---
 
 ## Dejavu (port 1358)
 
-Appbaseio Dejavu is a browser-based Elasticsearch data explorer. It connects directly from your browser to ES on port 9200 — CORS is pre-configured on the ES container.
+Appbaseio Dejavu is a browser-based Elasticsearch data explorer. CORS is pre-configured on the ES container.
 
 **Connect:** open http://localhost:1358, enter `http://localhost:9200` as the cluster URL and `security_alerts` as the index, then click Connect.
-
-**Filtering tips:**
-- Click the filter icon (▼) next to `title` → contains → `GENERATOR` to see only generator events
-- Filter `source` = `test` to isolate test-generated alerts
-- Filter `timestamp` → is between → `2026-06-26T14:32:00Z` and `2026-06-26T14:33:00Z` for a minute window
-- Or use the search bar: `source:test AND timestamp:[2026-06-26T14:32:00Z TO 2026-06-26T14:33:00Z]`
-
----
-
-## Prerequisites
-
-- Docker Desktop ≥ 24 (or Docker Engine + Compose plugin ≥ 2.20)
-- 4 GB RAM available to Docker (Elasticsearch needs ~512 MB heap)
-- Python 3.12 on the host (matches the `python:3.12-alpine` Dockerfiles)
-
----
-
-## Run
-
-```bash
-cd services/
-docker compose -p alertlab up -d
-docker compose -p alertlab --profile pipeline up -d
-```
-
-The first command starts infrastructure (`redis`, `postgres`, `elasticsearch`, `dejavu`, `dashboard`). The second activates the three pipeline services (`api`, `event_processor`, `event_generator`).
-
-Wait ~30 seconds for Elasticsearch to initialise, then check all services are up:
-
-```bash
-docker compose -p alertlab ps
-```
 
 ---
 
 ## Local Development
 
-Run the three pipeline services on the host against Docker infra (useful for debugging with a local debugger or faster iteration).
+Run the three pipeline services on the host against Docker infra (useful for debugging or faster iteration).
 
 **Setup (one-time, from repo root):**
 
@@ -313,7 +356,7 @@ Run the three pipeline services on the host against Docker infra (useful for deb
 source .venv/bin/activate
 ```
 
-The script enforces Python 3.12 (matching the Dockerfiles). If `python3.12` is not on your PATH, install it via [pyenv](https://github.com/pyenv/pyenv) or [python.org](https://www.python.org/downloads/).
+The script enforces Python 3.12. If `python3.12` is not on your PATH, install it via [pyenv](https://github.com/pyenv/pyenv) or [python.org](https://www.python.org/downloads/).
 
 ```bash
 # Start infra + dashboard first
@@ -349,19 +392,6 @@ Expected output ends with `Overall: PASS`.
 
 ---
 
-## Access
-
-| Service | URL |
-|---------|-----|
-| Dashboard | http://localhost:8050 |
-| API health | http://localhost:8000/api/health |
-| API docs (OpenAPI) | http://localhost:8000/docs |
-| API stats | http://localhost:8000/api/stats |
-| Recent alerts | http://localhost:8000/api/alerts |
-| Dejavu | http://localhost:1358 |
-
----
-
 ## Generate Alerts on Demand
 
 ```bash
@@ -384,7 +414,7 @@ curl "http://localhost:8000/api/alerts/search?severity=critical&alert_type=brute
 
 ## Tear Down
 
-**Stop pipeline services only** (leave infra + dashboard running — useful when iterating):
+**Stop pipeline services only** (leave infra + dashboard running):
 ```bash
 docker compose -p alertlab stop api event_processor event_generator
 ```
@@ -394,26 +424,17 @@ docker compose -p alertlab stop api event_processor event_generator
 docker compose -p alertlab rm -f -s api event_processor event_generator
 ```
 
-**Stop everything** (infra + pipeline):
+**Stop everything:**
 ```bash
 docker compose -p alertlab down
 ```
 
-Add `-v` to also remove volumes (Postgres data). Omit it to keep data across restarts.
+Add `-v` to also remove volumes (Postgres data). Note: `down` tears down the shared network and stops infra containers too — use the targeted `stop`/`rm` commands above when you only want to restart pipeline services.
 
-> Note: `docker compose -p alertlab down` tears down the shared network, which also stops infra containers. Use the targeted `stop`/`rm` commands above when you only want to restart the pipeline services.
-
----
-
-## Clean Slate on Demand
-
-Data persists across restarts. To wipe all state and start fresh, call:
-
+**Reset data without restarting** — truncates the ledger, drops/recreates the ES index, and flushes Redis:
 ```bash
 curl -X POST http://localhost:8000/api/reset
 ```
-
-This truncates `alert_ledger`, drops and recreates the `security_alerts` ES index, and flushes the `alert_queue` Redis list. Useful before reproducing a specific defect or resetting a test environment without restarting any services.
 
 ---
 
@@ -440,6 +461,6 @@ This truncates `alert_ledger`, drops and recreates the `security_alerts` ES inde
 - **No TLS or authentication** — lab environment only
 - **Fingerprint dedup window is 60 seconds** — coarse; high burst generation of the same alert type can produce unintended duplicates
 - **Stuck-alert scenarios require manual injection** — see `tests/EXPLORATORY_CHAOS_TESTING.md` for how to trigger and observe the reaper path
-- **No dead-letter queue** — `FAILED` alerts are logged in the ledger but never retried
+- **No dead-letter queue** — `FAILED` alerts are logged in the ledger; the processor retries up to `MAX_ES_RETRIES` times (default 3) but does not re-enqueue after exhausting retries
 - **New Postgres connection per ledger write** in the processor — acceptable at lab throughput, not production-safe
 - **Dejavu connects browser-direct to ES:9200** — CORS is pre-enabled; do not expose port 9200 publicly

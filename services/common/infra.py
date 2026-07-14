@@ -1,7 +1,8 @@
 """Infrastructure utilities — connection factories, wait loops, logging."""
+import json
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -17,9 +18,14 @@ def _env(key, default=None):
     return os.environ[key]
 
 
-def log(service, msg):
-    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{ts}] [{service}] {msg}", flush=True)
+def log(service, msg, level="INFO", alert_id=None, **extra):
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    record = {"timestamp": ts, "service": service, "level": level, "message": msg}
+    if alert_id is not None:
+        record["alert_id"] = alert_id
+    if extra:
+        record.update(extra)
+    print(json.dumps(record), flush=True)
 
 
 def get_pg_conn():

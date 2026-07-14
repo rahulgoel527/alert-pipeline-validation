@@ -15,6 +15,7 @@ ES_INDEX = os.environ["ES_INDEX"]
 
 STUCK_TIMEOUT_MINUTES = int(os.environ.get("STUCK_TIMEOUT_MINUTES", "60"))
 REAPER_INTERVAL_SECONDS = int(os.environ.get("REAPER_INTERVAL_SECONDS", "300"))
+MAX_ES_RETRIES = int(os.environ.get("MAX_ES_RETRIES", "3"))
 
 def log_ledger(pg_conn, alert_id, state, metadata=None):
     with pg_conn:
@@ -57,13 +58,24 @@ def process_alert(alert, es, pg_conn):
         log(SERVICE, f"Duplicate dropped alert {alert_id} (fingerprint={fingerprint})")
         return
 
-    try:
-        es.index(index=ES_INDEX, id=alert_id, document=alert)
-        log_ledger(pg_conn, alert_id, "STORED")
-        log(SERVICE, f"Stored alert {alert_id}")
-    except Exception as exc:
-        log_ledger(pg_conn, alert_id, "FAILED", {"error": str(exc)})
-        log(SERVICE, f"FAILED to store alert {alert_id}: {exc}")
+    last_exc = None
+    processing_start = time.time()
+    for attempt in range(MAX_ES_RETRIES):
+        try:
+            es.index(index=ES_INDEX, id=alert_id, document=alert)
+            duration_ms = int((time.time() - processing_start) * 1000)
+            log_ledger(pg_conn, alert_id, "STORED", {"processing_duration_ms": duration_ms})
+            log(SERVICE, f"Stored alert {alert_id} (attempt {attempt + 1}, {duration_ms}ms)")
+            return
+        except Exception as exc:
+            last_exc = exc
+            if attempt < MAX_ES_RETRIES - 1:
+                backoff = 0.5 * (2 ** attempt)
+                log(SERVICE, f"ES write failed for {alert_id} (attempt {attempt + 1}/{MAX_ES_RETRIES}), retrying in {backoff}s: {exc}")
+                time.sleep(backoff)
+
+    log_ledger(pg_conn, alert_id, "FAILED", {"error": str(last_exc), "attempt_count": MAX_ES_RETRIES})
+    log(SERVICE, f"FAILED to store alert {alert_id} after {MAX_ES_RETRIES} attempts: {last_exc}")
 
 def reaper_loop():
     """Background thread: finds alerts stuck in PROCESSING beyond STUCK_TIMEOUT_MINUTES
